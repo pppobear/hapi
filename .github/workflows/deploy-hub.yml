@@ -145,6 +145,7 @@ jobs:
                   git fetch --depth=1 origin "$GIT_REF"
 
                   git worktree remove --force "$build_path" >/dev/null 2>&1 || true
+                  rm -rf "$build_path"
                   git worktree add --force --detach "$build_path" FETCH_HEAD
 
                   cd "$build_path"
