@@ -1,0 +1,144 @@
+name: Deploy Hub via Tailscale
+
+on:
+    push:
+        branches:
+            - deploy-infra
+        paths:
+            - 'cli/**'
+            - 'hub/**'
+            - 'shared/**'
+            - 'web/**'
+            - 'package.json'
+            - 'bun.lock'
+            - '.github/workflows/deploy-hub.yml'
+            - 'scripts/deploy-hapi-release.sh'
+            - 'scripts/install-hapi-user-services.sh'
+            - 'docs/fork-deploy.md'
+    workflow_dispatch:
+        inputs:
+            git_ref:
+                description: Git ref to deploy
+                required: false
+                default: deploy-infra
+                type: string
+            restart_runner:
+                description: Restart hapi-runner after deploy
+                required: false
+                default: true
+                type: boolean
+
+permissions:
+    contents: read
+    id-token: write
+
+concurrency:
+    group: hapi-hub-deploy
+    cancel-in-progress: true
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        env:
+            HAPI_DEPLOY_HOST: ${{ vars.HAPI_DEPLOY_HOST }}
+            HAPI_DEPLOY_USER: ${{ vars.HAPI_DEPLOY_USER }}
+            HAPI_DEPLOY_KEEP_RELEASES: ${{ vars.HAPI_DEPLOY_KEEP_RELEASES }}
+            HAPI_DEPLOY_ROOT: ${{ vars.HAPI_DEPLOY_ROOT }}
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event.inputs.git_ref || github.ref }}
+
+            - uses: oven-sh/setup-bun@v2
+
+            - name: Validate deploy configuration
+              env:
+                  DEPLOY_SSH_KEY: ${{ secrets.HAPI_DEPLOY_SSH_KEY }}
+                  TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+                  TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
+              run: |
+                  set -euo pipefail
+
+                  : "${DEPLOY_SSH_KEY:?Missing secret HAPI_DEPLOY_SSH_KEY}"
+                  : "${TS_OAUTH_CLIENT_ID:?Missing secret TS_OAUTH_CLIENT_ID}"
+                  : "${TS_AUDIENCE:?Missing secret TS_AUDIENCE}"
+                  : "${HAPI_DEPLOY_HOST:?Missing repository variable HAPI_DEPLOY_HOST}"
+
+                  if [[ -z "${HAPI_DEPLOY_USER:-}" ]]; then
+                      HAPI_DEPLOY_USER="enoch"
+                  fi
+                  if [[ -z "${HAPI_DEPLOY_KEEP_RELEASES:-}" ]]; then
+                      HAPI_DEPLOY_KEEP_RELEASES="5"
+                  fi
+                  if [[ -z "${HAPI_DEPLOY_ROOT:-}" ]]; then
+                      HAPI_DEPLOY_ROOT="/home/${HAPI_DEPLOY_USER}/.local/share/hapi-deploy"
+                  fi
+
+                  {
+                      echo "HAPI_DEPLOY_USER=$HAPI_DEPLOY_USER"
+                      echo "HAPI_DEPLOY_KEEP_RELEASES=$HAPI_DEPLOY_KEEP_RELEASES"
+                      echo "HAPI_DEPLOY_ROOT=$HAPI_DEPLOY_ROOT"
+                  } >> "$GITHUB_ENV"
+
+            - name: Install dependencies
+              run: bun install
+
+            - name: Build all-in-one Linux binary
+              run: bun run build:single-exe
+
+            - name: Locate compiled binary
+              id: build
+              run: |
+                  set -euo pipefail
+                  binary_path="$(find cli/dist-exe -type f -path '*/bun-linux-x64*/hapi' | head -n 1)"
+                  : "${binary_path:?Unable to find compiled Linux binary}"
+                  echo "binary_path=$binary_path" >> "$GITHUB_OUTPUT"
+
+            - name: Connect to Tailscale
+              uses: tailscale/github-action@v4
+              with:
+                  oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+                  audience: ${{ secrets.TS_AUDIENCE }}
+                  tags: tag:ci
+                  ping: ${{ vars.HAPI_DEPLOY_HOST }}
+
+            - name: Configure SSH
+              run: |
+                  set -euo pipefail
+                  install -d -m 700 ~/.ssh
+                  printf '%s\n' '${{ secrets.HAPI_DEPLOY_SSH_KEY }}' > ~/.ssh/id_ed25519
+                  chmod 600 ~/.ssh/id_ed25519
+                  ssh-keyscan -H "$HAPI_DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+            - name: Upload release binary
+              run: |
+                  set -euo pipefail
+
+                  deploy_target="${HAPI_DEPLOY_USER}@${HAPI_DEPLOY_HOST}"
+                  remote_incoming_dir="${HAPI_DEPLOY_ROOT}/incoming"
+                  remote_incoming_path="${remote_incoming_dir}/hapi-${GITHUB_SHA}"
+
+                  ssh "$deploy_target" "mkdir -p '$remote_incoming_dir'"
+                  scp "${{ steps.build.outputs.binary_path }}" "$deploy_target:$remote_incoming_path"
+
+                  {
+                      echo "DEPLOY_TARGET=$deploy_target"
+                      echo "REMOTE_INCOMING_PATH=$remote_incoming_path"
+                  } >> "$GITHUB_ENV"
+
+            - name: Activate release
+              run: |
+                  set -euo pipefail
+
+                  restart_runner="${{ github.event.inputs.restart_runner }}"
+                  if [[ -z "$restart_runner" ]]; then
+                      restart_runner="true"
+                  fi
+
+                  ssh "$DEPLOY_TARGET" \
+                      "HAPI_DEPLOY_ROOT='${HAPI_DEPLOY_ROOT}' \
+                      HAPI_DEPLOY_KEEP_RELEASES='${HAPI_DEPLOY_KEEP_RELEASES}' \
+                      HAPI_DEPLOY_RESTART_RUNNER='${restart_runner}' \
+                      bash -s -- '${GITHUB_SHA}' '${REMOTE_INCOMING_PATH}'" \
+                      < scripts/deploy-hapi-release.sh
