@@ -20,10 +20,8 @@
 - `TS_OAUTH_CLIENT_ID`
 - `TS_AUDIENCE`
 - `HAPI_DEPLOY_SSH_KEY`
-- `HAPI_SOURCE_SSH_KEY`
 
 `TS_OAUTH_CLIENT_ID` 与 `TS_AUDIENCE` 对应 Tailscale GitHub Action 的 workload identity federation 配置。
-`HAPI_SOURCE_SSH_KEY` 是远端主机用于从 GitHub 直接 `git fetch` 代码的只读私钥。
 
 ## Tailscale 要求
 
@@ -71,14 +69,13 @@ systemctl --user start hapi-runner
 
 1. checkout `deploy-infra` 分支
 2. 通过 Tailscale 连到目标机器
-3. 在远端安装 GitHub 只读拉码私钥
-4. 远端 `git fetch` 目标 ref
-5. 远端创建临时 worktree
-6. 远端 `bun install --frozen-lockfile`
-7. 远端 `bun run build:single-exe`
-8. 远端调用 `scripts/deploy-hapi-release.sh`
-9. 切换 `current` 软链并重启 `hapi-hub`
-10. 按需重启 `hapi-runner`
+3. 远端 `git fetch` 目标 ref
+4. 远端创建临时 worktree
+5. 远端 `bun install --frozen-lockfile`
+6. 远端 `bun run build:single-exe`
+7. 远端调用 `scripts/deploy-hapi-release.sh`
+8. 切换 `current` 软链并重启 `hapi-hub`
+9. 按需重启 `hapi-runner`
 
 远端发布目录：
 

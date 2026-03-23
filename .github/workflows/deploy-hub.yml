@@ -54,14 +54,12 @@ jobs:
             - name: Validate deploy configuration
               env:
                   DEPLOY_SSH_KEY: ${{ secrets.HAPI_DEPLOY_SSH_KEY }}
-                  SOURCE_SSH_KEY: ${{ secrets.HAPI_SOURCE_SSH_KEY }}
                   TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
                   TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
               run: |
                   set -euo pipefail
 
                   : "${DEPLOY_SSH_KEY:?Missing secret HAPI_DEPLOY_SSH_KEY}"
-                  : "${SOURCE_SSH_KEY:?Missing secret HAPI_SOURCE_SSH_KEY}"
                   : "${TS_OAUTH_CLIENT_ID:?Missing secret TS_OAUTH_CLIENT_ID}"
                   : "${TS_AUDIENCE:?Missing secret TS_AUDIENCE}"
                   : "${HAPI_DEPLOY_HOST:?Missing repository variable HAPI_DEPLOY_HOST}"
@@ -102,18 +100,11 @@ jobs:
                   chmod 600 ~/.ssh/id_ed25519
                   ssh-keyscan -H "$HAPI_DEPLOY_HOST" >> ~/.ssh/known_hosts
 
-            - name: Install GitHub source key on remote
+            - name: Set deploy target
               run: |
                   set -euo pipefail
 
                   deploy_target="${HAPI_DEPLOY_USER}@${HAPI_DEPLOY_HOST}"
-
-                  ssh "$deploy_target" "install -d -m 700 ~/.ssh"
-                  ssh "$deploy_target" "cat > ~/.ssh/hapi_source_ed25519 && chmod 600 ~/.ssh/hapi_source_ed25519" <<'EOF'
-                  ${{ secrets.HAPI_SOURCE_SSH_KEY }}
-                  EOF
-                  ssh "$deploy_target" "ssh-keyscan -H github.com >> ~/.ssh/known_hosts"
-
                   echo "DEPLOY_TARGET=$deploy_target" >> "$GITHUB_ENV"
 
             - name: Build and activate on remote
@@ -142,7 +133,6 @@ jobs:
                   repo_path="${HAPI_DEPLOY_REPO_PATH}"
                   build_root="${HAPI_DEPLOY_ROOT}/builds"
                   build_path="${build_root}/${GITHUB_SHA}"
-                  source_key="$HOME/.ssh/hapi_source_ed25519"
 
                   install -d "$build_root"
 
@@ -152,8 +142,7 @@ jobs:
                   trap cleanup EXIT
 
                   cd "$repo_path"
-                  GIT_SSH_COMMAND="ssh -i '$source_key' -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes" \
-                      git fetch --depth=1 origin "$GIT_REF"
+                  git fetch --depth=1 origin "$GIT_REF"
 
                   git worktree remove --force "$build_path" >/dev/null 2>&1 || true
                   git worktree add --force --detach "$build_path" FETCH_HEAD
