@@ -148,7 +148,7 @@ jobs:
                   git worktree add --force --detach "$build_path" FETCH_HEAD
 
                   cd "$build_path"
-                  bun install --frozen-lockfile
+                  bun install
                   bun run build:single-exe
 
                   binary_path="$build_path/cli/dist-exe/bun-linux-x64-baseline/hapi"
