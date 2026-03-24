@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { I18nProvider } from '@/lib/i18n-context'
 import { LoginPrompt } from './LoginPrompt'
@@ -12,14 +12,32 @@ function renderWithProviders(ui: React.ReactElement) {
 }
 
 describe('LoginPrompt', () => {
+    const originalLocalStorage = window.localStorage
+
     beforeEach(() => {
         vi.clearAllMocks()
+        const store = new Map<string, string>()
         const localStorageMock = {
-            getItem: vi.fn(() => 'en'),
-            setItem: vi.fn(),
-            removeItem: vi.fn(),
+            getItem: vi.fn((key: string) => store.get(key) ?? (key === 'hapi-lang' ? 'en' : null)),
+            setItem: vi.fn((key: string, value: string) => {
+                store.set(key, value)
+            }),
+            removeItem: vi.fn((key: string) => {
+                store.delete(key)
+            }),
+            clear: vi.fn(() => {
+                store.clear()
+            }),
+            key: vi.fn((index: number) => Array.from(store.keys())[index] ?? null),
+            get length() {
+                return store.size
+            }
         }
-        Object.defineProperty(window, 'localStorage', { value: localStorageMock })
+        Object.defineProperty(window, 'localStorage', { configurable: true, value: localStorageMock })
+    })
+
+    afterEach(() => {
+        Object.defineProperty(window, 'localStorage', { configurable: true, value: originalLocalStorage })
     })
 
     it('does not clear first hub URL edit when hub URL required', async () => {

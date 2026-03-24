@@ -58,8 +58,6 @@ describe('AcpSdkBackend', () => {
                     });
                 }, 0);
 
-                await sleep(5);
-
                 setTimeout(() => {
                     backendInternal.handleSessionUpdate({
                         sessionId: 'session-1',
@@ -71,7 +69,7 @@ describe('AcpSdkBackend', () => {
                             status: 'in_progress'
                         }
                     });
-                }, 3);
+                }, 2);
 
                 setTimeout(() => {
                     backendInternal.handleSessionUpdate({
@@ -83,7 +81,9 @@ describe('AcpSdkBackend', () => {
                             rawOutput: { ok: true }
                         }
                     });
-                }, 6);
+                }, 5);
+
+                await sleep(1);
 
                 return { stopReason: 'end_turn' };
             },

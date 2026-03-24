@@ -2,7 +2,7 @@ import type { AgentState } from '@/types/api'
 import type { ChatBlock, NormalizedMessage, UsageData } from '@/chat/types'
 import { traceMessages, type TracedMessage } from '@/chat/tracer'
 import { dedupeAgentEvents, foldApiErrorEvents } from '@/chat/reducerEvents'
-import { collectTitleChanges, collectToolIdsFromMessages, ensureToolBlock, getPermissions } from '@/chat/reducerTools'
+import { collectTitleChanges, ensureToolBlock, getPermissions } from '@/chat/reducerTools'
 import { reduceTimeline } from '@/chat/reducerTimeline'
 
 // Calculate context size from usage data
@@ -19,12 +19,21 @@ export type LatestUsage = {
     timestamp: number
 }
 
+function collectRenderedToolBlockIds(blocks: ChatBlock[], ids: Set<string> = new Set()): Set<string> {
+    for (const block of blocks) {
+        if (block.kind !== 'tool-call') continue
+        ids.add(block.id)
+        collectRenderedToolBlockIds(block.children, ids)
+    }
+
+    return ids
+}
+
 export function reduceChatBlocks(
     normalized: NormalizedMessage[],
     agentState: AgentState | null | undefined
 ): { blocks: ChatBlock[]; hasReadyEvent: boolean; latestUsage: LatestUsage | null } {
     const permissionsById = getPermissions(agentState)
-    const toolIdsInMessages = collectToolIdsFromMessages(normalized)
     const titleChangesByToolUseId = collectTitleChanges(normalized)
 
     const traced = traceMessages(normalized)
@@ -45,9 +54,10 @@ export function reduceChatBlocks(
     const emittedTitleChangeToolUseIds = new Set<string>()
     const reducerContext = { permissionsById, groups, consumedGroupIds, titleChangesByToolUseId, emittedTitleChangeToolUseIds }
     const rootResult = reduceTimeline(root, reducerContext)
+    const renderedToolBlockIds = collectRenderedToolBlockIds(rootResult.blocks)
     let hasReadyEvent = rootResult.hasReadyEvent
 
-    // Only create permission-only tool cards when there is no tool call/result in the transcript.
+    // Only create permission-only tool cards when that tool is not already rendered.
     // Also skip if the permission is older than the oldest message in the current view,
     // to avoid mixing old tool cards with newer messages when paginating.
     const oldestMessageTime = normalized.length > 0
@@ -55,8 +65,7 @@ export function reduceChatBlocks(
         : null
 
     for (const [id, entry] of permissionsById) {
-        if (toolIdsInMessages.has(id)) continue
-        if (rootResult.toolBlocksById.has(id)) continue
+        if (renderedToolBlockIds.has(id)) continue
 
         const createdAt = entry.permission.createdAt ?? Date.now()
 

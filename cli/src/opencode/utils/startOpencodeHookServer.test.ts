@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest'
 import { request } from 'node:http'
+import { createServer } from 'node:net'
 import { startOpencodeHookServer } from './startOpencodeHookServer'
+
+const canListenOnLoopback = await (async (): Promise<boolean> => {
+    return await new Promise((resolve) => {
+        const server = createServer()
+        server.once('error', () => resolve(false))
+        server.listen(0, '127.0.0.1', () => {
+            server.close(() => resolve(true))
+        })
+    })
+})()
 
 const sendHookRequest = async (
     port: number,
@@ -39,7 +50,7 @@ const sendHookRequest = async (
     })
 }
 
-describe('startOpencodeHookServer', () => {
+describe.skipIf(!canListenOnLoopback)('startOpencodeHookServer', () => {
     it('forwards hook payload to callback', async () => {
         let received: { event?: string; payload?: unknown; sessionId?: string } = {}
         const server = await startOpencodeHookServer({
