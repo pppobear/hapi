@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest'
 import { request } from 'node:http'
+import { createServer } from 'node:net'
 import { startHookServer, type SessionHookData } from './startHookServer'
+
+const canListenOnLoopback = await (async (): Promise<boolean> => {
+    return await new Promise((resolve) => {
+        const server = createServer()
+        server.once('error', () => resolve(false))
+        server.listen(0, '127.0.0.1', () => {
+            server.close(() => resolve(true))
+        })
+    })
+})()
 
 const sendHookRequest = async (port: number, body: string, token?: string): Promise<{ statusCode?: number; body: string }> => {
     return await new Promise((resolve, reject) => {
@@ -35,7 +46,7 @@ const sendHookRequest = async (port: number, body: string, token?: string): Prom
     })
 }
 
-describe('startHookServer', () => {
+describe.skipIf(!canListenOnLoopback)('startHookServer', () => {
     it('forwards session hook payload to callback', async () => {
         let received: { sessionId?: string; data?: SessionHookData } = {}
         const server = await startHookServer({

@@ -78,7 +78,11 @@ async function isServerHealthy(): Promise<boolean> {
   }
 }
 
-describe.skipIf(!await isServerHealthy())('Runner Integration Tests', { timeout: 20_000 }, () => {
+function isRunnerIntegrationEnabled(): boolean {
+  return process.env.HAPI_RUNNER_INTEGRATION === '1'
+}
+
+describe.skipIf(!isRunnerIntegrationEnabled() || !await isServerHealthy())('Runner Integration Tests', { timeout: 20_000 }, () => {
   let runnerPid: number;
 
   beforeEach(async () => {

@@ -1,23 +1,29 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createSessionScanner } from './sessionScanner'
+import { getProjectPath } from './path'
 import { RawJSONLines } from '../types'
 import { mkdir, writeFile, appendFile, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { tmpdir, homedir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { existsSync } from 'node:fs'
 
 describe('sessionScanner', () => {
   let testDir: string
   let projectDir: string
+  let claudeConfigDir: string
   let collectedMessages: RawJSONLines[]
   let scanner: Awaited<ReturnType<typeof createSessionScanner>> | null = null
+  let originalClaudeConfigDir: string | undefined
   
   beforeEach(async () => {
     testDir = join(tmpdir(), `scanner-test-${Date.now()}`)
     await mkdir(testDir, { recursive: true })
-    
-    const projectName = testDir.replace(/\//g, '-')
-    projectDir = join(homedir(), '.claude', 'projects', projectName)
+
+    claudeConfigDir = join(testDir, '.claude-test')
+    originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR
+    process.env.CLAUDE_CONFIG_DIR = claudeConfigDir
+
+    projectDir = getProjectPath(testDir)
     await mkdir(projectDir, { recursive: true })
     
     collectedMessages = []
@@ -35,6 +41,12 @@ describe('sessionScanner', () => {
     }
     if (existsSync(projectDir)) {
       await rm(projectDir, { recursive: true, force: true })
+    }
+
+    if (originalClaudeConfigDir === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir
     }
   })
   
