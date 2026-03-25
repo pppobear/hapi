@@ -2,7 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { AssistantRuntimeProvider } from '@assistant-ui/react'
 import type { ApiClient } from '@/api/client'
-import type { AttachmentMetadata, CodexCollaborationMode, DecryptedMessage, PermissionMode, Session } from '@/types/api'
+import type {
+    AttachmentMetadata,
+    CodexCollaborationMode,
+    DecryptedMessage,
+    PermissionMode,
+    Session,
+    SlashCommand
+} from '@/types/api'
 import type { ChatBlock, NormalizedMessage } from '@/chat/types'
 import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
@@ -12,6 +19,9 @@ import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
 import { useHappyRuntime } from '@/lib/assistant-runtime'
 import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
+import { findUnsupportedCodexBuiltinSlashCommand } from '@/lib/codexSlashCommands'
+import { useToast } from '@/lib/toast-context'
+import { useTranslation } from '@/lib/use-translation'
 import { SessionHeader } from '@/components/SessionHeader'
 import { TeamPanel } from '@/components/TeamPanel'
 import { usePlatform } from '@/hooks/usePlatform'
@@ -39,8 +49,11 @@ export function SessionChat(props: {
     onAtBottomChange: (atBottom: boolean) => void
     onRetryMessage?: (localId: string) => void
     autocompleteSuggestions?: (query: string) => Promise<Suggestion[]>
+    availableSlashCommands?: readonly SlashCommand[]
 }) {
     const { haptic } = usePlatform()
+    const { addToast } = useToast()
+    const { t } = useTranslation()
     const navigate = useNavigate()
     const sessionInactive = !props.session.active
     const terminalSupported = isRemoteTerminalSupported(props.session.metadata)
@@ -50,7 +63,7 @@ export function SessionChat(props: {
     const agentFlavor = props.session.metadata?.flavor ?? null
     const controlledByUser = props.session.agentState?.controlledByUser === true
     const codexCollaborationModeSupported = agentFlavor === 'codex' && !controlledByUser
-    const { abortSession, switchSession, setPermissionMode, setCollaborationMode, setModel } = useSessionActions(
+    const { abortSession, switchSession, setPermissionMode, setCollaborationMode, setModel, setEffort } = useSessionActions(
         props.api,
         props.session.id,
         agentFlavor,
@@ -233,6 +246,17 @@ export function SessionChat(props: {
         }
     }, [setModel, props.onRefresh, haptic])
 
+    const handleEffortChange = useCallback(async (effort: string | null) => {
+        try {
+            await setEffort(effort)
+            haptic.notification('success')
+            props.onRefresh()
+        } catch (e) {
+            haptic.notification('error')
+            console.error('Failed to set effort:', e)
+        }
+    }, [setEffort, props.onRefresh, haptic])
+
     // Abort handler
     const handleAbort = useCallback(async () => {
         await abortSession()
@@ -260,9 +284,26 @@ export function SessionChat(props: {
     }, [navigate, props.session.id])
 
     const handleSend = useCallback((text: string, attachments?: AttachmentMetadata[]) => {
+        if (agentFlavor === 'codex') {
+            const unsupportedCommand = findUnsupportedCodexBuiltinSlashCommand(
+                text,
+                props.availableSlashCommands ?? []
+            )
+            if (unsupportedCommand) {
+                haptic.notification('error')
+                addToast({
+                    title: t('composer.codexSlashUnsupported.title'),
+                    body: t('composer.codexSlashUnsupported.body', { command: `/${unsupportedCommand}` }),
+                    sessionId: props.session.id,
+                    url: `/sessions/${props.session.id}`
+                })
+                return
+            }
+        }
+
         props.onSend(text, attachments)
         setForceScrollToken((token) => token + 1)
-    }, [props.onSend])
+    }, [agentFlavor, props.availableSlashCommands, props.onSend, props.session.id, addToast, haptic, t])
 
     const attachmentAdapter = useMemo(() => {
         if (!props.session.active) {
@@ -332,6 +373,7 @@ export function SessionChat(props: {
                         permissionMode={props.session.permissionMode}
                         collaborationMode={codexCollaborationModeSupported ? props.session.collaborationMode : undefined}
                         model={props.session.model}
+                        effort={props.session.effort}
                         agentFlavor={agentFlavor}
                         active={props.session.active}
                         allowSendWhenInactive
@@ -346,6 +388,7 @@ export function SessionChat(props: {
                         }
                         onPermissionModeChange={handlePermissionModeChange}
                         onModelChange={handleModelChange}
+                        onEffortChange={handleEffortChange}
                         onSwitchToRemote={handleSwitchToRemote}
                         onTerminal={props.session.active && terminalSupported ? handleViewTerminal : undefined}
                         terminalUnsupported={props.session.active && !terminalSupported}

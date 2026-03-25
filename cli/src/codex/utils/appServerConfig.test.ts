@@ -102,7 +102,12 @@ describe('appServerConfig', () => {
             threadId: 'thread-1',
             message: 'hello',
             cwd: '/workspace/project',
-            mode: { permissionMode: 'read-only', model: 'o3', collaborationMode: 'default' }
+            mode: {
+                permissionMode: 'read-only',
+                model: 'o3',
+                modelReasoningEffort: 'high',
+                collaborationMode: 'default'
+            }
         });
 
         expect(params.threadId).toBe('thread-1');
@@ -114,6 +119,7 @@ describe('appServerConfig', () => {
             mode: 'default',
             settings: {
                 model: 'o3',
+                reasoning_effort: 'high',
                 developer_instructions: codexSystemPrompt
             }
         });
@@ -125,13 +131,19 @@ describe('appServerConfig', () => {
             threadId: 'thread-1',
             message: 'hello',
             cwd: '/workspace/project',
-            mode: { permissionMode: 'default', model: 'o3', collaborationMode: 'plan' }
+            mode: {
+                permissionMode: 'default',
+                model: 'o3',
+                modelReasoningEffort: 'high',
+                collaborationMode: 'plan'
+            }
         });
 
         expect(params.collaborationMode).toEqual({
             mode: 'plan',
             settings: {
                 model: 'o3',
+                reasoning_effort: 'high',
                 developer_instructions: codexSystemPrompt
             }
         });

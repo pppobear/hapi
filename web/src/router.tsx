@@ -142,7 +142,7 @@ function SessionsPage() {
                     </div>
                 </div>
 
-                <div className="flex-1 min-h-0 overflow-y-auto desktop-scrollbar-left">
+                <div className="app-scroll-y flex-1 min-h-0 desktop-scrollbar-left">
                     {error ? (
                         <div className="mx-auto w-full max-w-content px-3 py-2">
                             <div className="text-sm text-red-600">{error}</div>
@@ -267,6 +267,7 @@ function SessionPage() {
     // Get agent type from session metadata for slash commands
     const agentType = session?.metadata?.flavor ?? 'claude'
     const {
+        commands: slashCommands,
         getSuggestions: getSlashSuggestions,
     } = useSlashCommands(api, sessionId, agentType)
     const {
@@ -313,6 +314,7 @@ function SessionPage() {
             onAtBottomChange={setAtBottom}
             onRetryMessage={retryMessage}
             autocompleteSuggestions={getAutocompleteSuggestions}
+            availableSlashCommands={slashCommands}
         />
     )
 }
@@ -366,7 +368,7 @@ function NewSessionPage() {
                 <div className="flex-1 font-semibold">{t('newSession.title')}</div>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="app-scroll-y flex-1 min-h-0">
                 {machinesError ? (
                     <div className="p-3 text-sm text-red-600">
                         {machinesError}
