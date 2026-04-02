@@ -350,7 +350,9 @@ export async function startRunner(): Promise<void> {
                 ? 'opencode'
                 : 'claude';
         const args = [agentCommand];
-        if (options.resumeSessionId) {
+        if (options.forkSessionId && agent === 'codex') {
+            args.push('fork', options.forkSessionId);
+        } else if (options.resumeSessionId) {
             if (agent === 'codex') {
                 args.push('resume', options.resumeSessionId);
             } else if (agent === 'cursor') {

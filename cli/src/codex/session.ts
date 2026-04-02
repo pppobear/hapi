@@ -14,6 +14,7 @@ type LocalLaunchFailure = {
 export class CodexSession extends AgentSessionBase<EnhancedMode> {
     readonly codexArgs?: string[];
     readonly codexCliOverrides?: CodexCliOverrides;
+    readonly forkSessionId?: string;
     readonly startedBy: 'runner' | 'terminal';
     readonly startingMode: 'local' | 'remote';
     localLaunchFailure: LocalLaunchFailure | null = null;
@@ -31,6 +32,7 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
         startingMode: 'local' | 'remote';
         codexArgs?: string[];
         codexCliOverrides?: CodexCliOverrides;
+        forkSessionId?: string;
         permissionMode?: PermissionMode;
         model?: SessionModel;
         collaborationMode?: EnhancedMode['collaborationMode'];
@@ -57,6 +59,7 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
 
         this.codexArgs = opts.codexArgs;
         this.codexCliOverrides = opts.codexCliOverrides;
+        this.forkSessionId = opts.forkSessionId;
         this.startedBy = opts.startedBy;
         this.startingMode = opts.startingMode;
         this.permissionMode = opts.permissionMode;

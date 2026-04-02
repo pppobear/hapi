@@ -21,6 +21,7 @@ export async function runCodex(opts: {
     codexArgs?: string[];
     permissionMode?: PermissionMode;
     resumeSessionId?: string;
+    forkSessionId?: string;
     model?: string;
     modelReasoningEffort?: ReasoningEffort;
 }): Promise<void> {
@@ -177,6 +178,7 @@ export async function runCodex(opts: {
             model: currentModel,
             collaborationMode: currentCollaborationMode,
             resumeSessionId: opts.resumeSessionId,
+            forkSessionId: opts.forkSessionId,
             onModeChange: createModeChangeHandler(session),
             onSessionReady: (instance) => {
                 sessionWrapperRef.current = instance;

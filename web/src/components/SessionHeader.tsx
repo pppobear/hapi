@@ -8,6 +8,8 @@ import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { getSessionModelLabel } from '@/lib/sessionModelLabel'
 import { useTranslation } from '@/lib/use-translation'
+import { useNavigate } from '@tanstack/react-router'
+import { useToast } from '@/lib/toast-context'
 
 function getSessionTitle(session: Session): string {
     if (session.metadata?.name) {
@@ -68,10 +70,13 @@ export function SessionHeader(props: {
     onSessionDeleted?: () => void
 }) {
     const { t } = useTranslation()
+    const navigate = useNavigate()
+    const { addToast } = useToast()
     const { session, api, onSessionDeleted } = props
     const title = useMemo(() => getSessionTitle(session), [session])
     const worktreeBranch = session.metadata?.worktree?.branch
     const modelLabel = getSessionModelLabel(session)
+    const canFork = session.metadata?.flavor === 'codex'
 
     const [menuOpen, setMenuOpen] = useState(false)
     const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -81,7 +86,7 @@ export function SessionHeader(props: {
     const [archiveOpen, setArchiveOpen] = useState(false)
     const [deleteOpen, setDeleteOpen] = useState(false)
 
-    const { archiveSession, renameSession, deleteSession, isPending } = useSessionActions(
+    const { archiveSession, forkSession, renameSession, deleteSession, isPending } = useSessionActions(
         api,
         session.id,
         session.metadata?.flavor ?? null
@@ -98,6 +103,32 @@ export function SessionHeader(props: {
             setMenuAnchorPoint({ x: rect.right, y: rect.bottom })
         }
         setMenuOpen((open) => !open)
+    }
+
+    const handleFork = async () => {
+        try {
+            const newSessionId = await forkSession()
+            addToast({
+                title: t('dialog.fork.successTitle'),
+                body: t('dialog.fork.successDescription', { name: title }),
+                sessionId: newSessionId,
+                url: `/sessions/${newSessionId}`,
+                variant: 'success',
+                actionLabel: t('toast.action.openSession')
+            })
+            navigate({
+                to: '/sessions/$sessionId',
+                params: { sessionId: newSessionId }
+            })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Fork failed'
+            addToast({
+                title: t('dialog.fork.failedTitle'),
+                body: message,
+                sessionId: session.id,
+                url: `/sessions/${session.id}`
+            })
+        }
     }
 
     // In Telegram, don't render header (Telegram provides its own)
@@ -182,7 +213,9 @@ export function SessionHeader(props: {
                 isOpen={menuOpen}
                 onClose={() => setMenuOpen(false)}
                 sessionActive={session.active}
+                canFork={canFork}
                 onRename={() => setRenameOpen(true)}
+                onFork={handleFork}
                 onArchive={() => setArchiveOpen(true)}
                 onDelete={() => setDeleteOpen(true)}
                 anchorPoint={menuAnchorPoint}
