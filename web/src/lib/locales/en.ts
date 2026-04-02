@@ -60,6 +60,7 @@ export default {
 
   // Session actions
   'session.action.rename': 'Rename',
+  'session.action.fork': 'Fork',
   'session.action.archive': 'Archive',
   'session.action.delete': 'Delete',
   'session.action.copy': 'Copy',
@@ -74,6 +75,10 @@ export default {
   'dialog.archive.description': 'Are you sure you want to archive "{name}"? This will disconnect active session.',
   'dialog.archive.confirm': 'Archive',
   'dialog.archive.confirming': 'Archiving…',
+  'dialog.fork.successTitle': 'Fork created',
+  'dialog.fork.successDescription': 'Created a new session from "{name}".',
+  'dialog.fork.failedTitle': 'Fork failed',
+  'toast.action.openSession': 'Open new session',
   'dialog.delete.title': 'Delete Session',
   'dialog.delete.description': 'Are you sure you want to delete "{name}"? This action cannot be undone.',
   'dialog.delete.confirm': 'Delete',

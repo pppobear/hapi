@@ -5,7 +5,27 @@ import type { EnhancedMode } from './loop';
 const harness = vi.hoisted(() => ({
     notifications: [] as Array<{ method: string; params: unknown }>,
     registerRequestCalls: [] as string[],
-    initializeCalls: [] as unknown[]
+    initializeCalls: [] as unknown[],
+    forkCalls: [] as unknown[]
+}));
+
+vi.mock('react', () => ({
+    default: {
+        createElement: () => ({})
+    }
+}));
+
+vi.mock('ink', () => ({
+    render: () => ({
+        unmount: () => {}
+    })
+}));
+
+vi.mock('@/ui/logger', () => ({
+    logger: {
+        debug: () => {},
+        warn: () => {}
+    }
 }));
 
 vi.mock('./codexAppServerClient', () => {
@@ -33,6 +53,11 @@ vi.mock('./codexAppServerClient', () => {
 
         async resumeThread(): Promise<{ thread: { id: string }; model: string }> {
             return { thread: { id: 'thread-anonymous' }, model: 'gpt-5.4' };
+        }
+
+        async forkThread(params: unknown): Promise<{ thread: { id: string }; model: string }> {
+            harness.forkCalls.push(params);
+            return { thread: { id: 'thread-forked' }, model: 'gpt-5.4' };
         }
 
         async startTurn(): Promise<{ turn: Record<string, never> }> {
@@ -80,7 +105,7 @@ function createMode(): EnhancedMode {
     };
 }
 
-function createSessionStub() {
+function createSessionStub(opts?: { forkSessionId?: string | null }) {
     const queue = new MessageQueue2<EnhancedMode>((mode) => JSON.stringify(mode));
     queue.push('hello from launcher test', createMode());
     queue.close();
@@ -122,8 +147,12 @@ function createSessionStub() {
         codexArgs: undefined,
         codexCliOverrides: undefined,
         sessionId: null as string | null,
+        forkSessionId: opts?.forkSessionId ?? undefined,
         thinking: false,
         getPermissionMode() {
+            return 'default' as const;
+        },
+        getCollaborationMode() {
             return 'default' as const;
         },
         setModel(nextModel: string | null) {
@@ -168,6 +197,7 @@ describe('codexRemoteLauncher', () => {
         harness.notifications = [];
         harness.registerRequestCalls = [];
         harness.initializeCalls = [];
+        harness.forkCalls = [];
     });
 
     it('finishes a turn and emits ready when task lifecycle events omit turn_id', async () => {
@@ -197,5 +227,23 @@ describe('codexRemoteLauncher', () => {
         expect(sessionEvents.filter((event) => event.type === 'ready').length).toBeGreaterThanOrEqual(1);
         expect(thinkingChanges).toContain(true);
         expect(session.thinking).toBe(false);
+    });
+
+    it('forks the source thread before starting a turn when forkSessionId is provided', async () => {
+        const {
+            session,
+            foundSessionIds
+        } = createSessionStub({ forkSessionId: 'thread-source' });
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(harness.forkCalls).toHaveLength(1);
+        expect(harness.forkCalls[0]).toMatchObject({
+            threadId: 'thread-source',
+            cwd: '/tmp/hapi-update',
+            persistExtendedHistory: true
+        });
+        expect(foundSessionIds).toContain('thread-forked');
     });
 });
