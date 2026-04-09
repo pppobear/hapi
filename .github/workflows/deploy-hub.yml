@@ -124,11 +124,30 @@ jobs:
                   curl -fsSL -o /tmp/tunwg/LICENSE \
                       "https://raw.githubusercontent.com/tiann/tunwg/refs/heads/master/LICENSE"
 
-            - name: Push code to remote
+            - name: Sync source to remote
               run: |
                   set -euo pipefail
-                  ssh "$DEPLOY_TARGET" "git -C '${HAPI_DEPLOY_REPO_PATH}' config receive.shallowUpdate true"
-                  git push --force "${DEPLOY_TARGET}:${HAPI_DEPLOY_REPO_PATH}" "HEAD:refs/ci/deploy"
+
+                  source_path="${HAPI_DEPLOY_ROOT}/workspace"
+                  echo "HAPI_DEPLOY_SOURCE_PATH=$source_path" >> "$GITHUB_ENV"
+
+                  ssh "$DEPLOY_TARGET" "install -d '${source_path}' '${source_path}/hub/tools/tunwg'"
+
+                  rsync -az --delete \
+                      --exclude='.git/' \
+                      --exclude='.github/' \
+                      --exclude='docs/' \
+                      --exclude='website/' \
+                      --exclude='node_modules/' \
+                      --exclude='*/node_modules/' \
+                      --exclude='cli/dist-exe/' \
+                      --exclude='hub/dist/' \
+                      --exclude='web/dist/' \
+                      ./ "$DEPLOY_TARGET:${source_path}/"
+
+                  # Upload tunwg binaries (remote cannot reach github.com)
+                  scp /tmp/tunwg/* "$DEPLOY_TARGET:${source_path}/hub/tools/tunwg/"
+                  ssh "$DEPLOY_TARGET" "chmod 755 ${source_path}/hub/tools/tunwg/tunwg-*"
 
             - name: Build and activate on remote
               run: |
@@ -139,54 +158,45 @@ jobs:
                       restart_runner="true"
                   fi
 
-                  build_path="${HAPI_DEPLOY_ROOT}/builds/${GITHUB_SHA}"
-
-                  # Create worktree on remote
-                  ssh "$DEPLOY_TARGET" \
-                      "HAPI_DEPLOY_ROOT='${HAPI_DEPLOY_ROOT}' \
-                      HAPI_DEPLOY_REPO_PATH='${HAPI_DEPLOY_REPO_PATH}' \
-                      GITHUB_SHA='${GITHUB_SHA}' \
-                      bash -s" <<'SETUP'
-                  set -euo pipefail
-                  build_root="${HAPI_DEPLOY_ROOT}/builds"
-                  build_path="${build_root}/${GITHUB_SHA}"
-                  install -d "$build_root"
-                  cd "${HAPI_DEPLOY_REPO_PATH}"
-                  git worktree remove --force "$build_path" >/dev/null 2>&1 || true
-                  rm -rf "$build_path"
-                  git worktree add --force --detach "$build_path" refs/ci/deploy
-                  mkdir -p "$build_path/hub/tools/tunwg"
-                  SETUP
-
-                  # Upload tunwg binaries (remote cannot reach github.com)
-                  scp /tmp/tunwg/* "$DEPLOY_TARGET:${build_path}/hub/tools/tunwg/"
-                  ssh "$DEPLOY_TARGET" "chmod 755 ${build_path}/hub/tools/tunwg/tunwg-*"
-
                   # Build and deploy
                   ssh "$DEPLOY_TARGET" \
                       "HAPI_DEPLOY_ROOT='${HAPI_DEPLOY_ROOT}' \
                       HAPI_DEPLOY_KEEP_RELEASES='${HAPI_DEPLOY_KEEP_RELEASES}' \
                       HAPI_DEPLOY_RESTART_RUNNER='${restart_runner}' \
-                      HAPI_DEPLOY_REPO_PATH='${HAPI_DEPLOY_REPO_PATH}' \
+                      HAPI_DEPLOY_SOURCE_PATH='${HAPI_DEPLOY_SOURCE_PATH}' \
                       GITHUB_SHA='${GITHUB_SHA}' \
                       bash -s" <<'EOF'
                   set -euo pipefail
 
                   export PATH="$HOME/.bun/bin:$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:$PATH"
 
-                  repo_path="${HAPI_DEPLOY_REPO_PATH}"
-                  build_path="${HAPI_DEPLOY_ROOT}/builds/${GITHUB_SHA}"
+                  source_path="${HAPI_DEPLOY_SOURCE_PATH:-${HAPI_DEPLOY_ROOT}/workspace}"
+                  deps_fingerprint_path="${source_path}/.deploy-deps.sha256"
 
-                  cleanup() {
-                      git -C "$repo_path" worktree remove --force "$build_path" >/dev/null 2>&1 || true
-                  }
-                  trap cleanup EXIT
+                  cd "$source_path"
 
-                  cd "$build_path"
-                  bun install
+                  current_deps_fingerprint="$(
+                      sha256sum \
+                          package.json \
+                          bun.lock \
+                          cli/package.json \
+                          hub/package.json \
+                          shared/package.json \
+                          web/package.json | sha256sum | awk '{print $1}'
+                  )"
+                  previous_deps_fingerprint="$(cat "$deps_fingerprint_path" 2>/dev/null || true)"
+
+                  if [[ ! -d node_modules || "$current_deps_fingerprint" != "$previous_deps_fingerprint" ]]; then
+                      echo "Dependency fingerprint changed; running bun install"
+                      bun install
+                      printf '%s\n' "$current_deps_fingerprint" > "$deps_fingerprint_path"
+                  else
+                      echo "Dependency fingerprint unchanged; skipping bun install"
+                  fi
+
                   bun run build:single-exe
 
-                  binary_path="$build_path/cli/dist-exe/bun-linux-x64-baseline/hapi"
+                  binary_path="$source_path/cli/dist-exe/bun-linux-x64-baseline/hapi"
                   test -x "$binary_path"
 
                   HAPI_DEPLOY_ROOT="$HAPI_DEPLOY_ROOT" \

@@ -69,9 +69,9 @@ systemctl --user start hapi-runner
 
 1. checkout `deploy-infra` 分支
 2. 通过 Tailscale 连到目标机器
-3. 远端 `git fetch` 目标 ref
-4. 远端创建临时 worktree
-5. 远端 `bun install --frozen-lockfile`
+3. CI 通过 `rsync` 把源码同步到远端常驻 workspace（不再走 `git push` / `git worktree`）
+4. CI 把 `tunwg` 二进制同步到远端 workspace
+5. 远端按依赖指纹决定是否执行 `bun install`
 6. 远端 `bun run build:single-exe`
 7. 远端调用 `scripts/deploy-hapi-release.sh`
 8. 切换 `current` 软链并重启 `hapi-hub`
@@ -81,3 +81,10 @@ systemctl --user start hapi-runner
 
 - `/home/enoch/.local/share/hapi-deploy/releases/<git-sha>/hapi`
 - `/home/enoch/.local/share/hapi-deploy/current`
+- `/home/enoch/.local/share/hapi-deploy/workspace`
+
+## 当前加速点
+
+- 不再把 commit pack 推到远端仓库，避免 `git push` 成为主要耗时
+- 保留远端 workspace 和 `node_modules`，依赖未变化时跳过 `bun install`
+- `rsync --delete` 只同步构建所需源码，跳过 `.git`、`docs`、`website` 和各类构建输出
