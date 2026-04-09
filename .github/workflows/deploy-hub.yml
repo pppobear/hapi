@@ -118,7 +118,8 @@ jobs:
 
                   git_ref="${{ github.event.inputs.git_ref || github.ref_name }}"
 
-                  repo_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+                  # Push code directly to remote repo (remote server cannot reach github.com)
+                  git push --force "${DEPLOY_TARGET}:${HAPI_DEPLOY_REPO_PATH}" "HEAD:refs/ci/deploy"
 
                   ssh "$DEPLOY_TARGET" \
                       "HAPI_DEPLOY_ROOT='${HAPI_DEPLOY_ROOT}' \
@@ -127,7 +128,6 @@ jobs:
                       HAPI_DEPLOY_REPO_PATH='${HAPI_DEPLOY_REPO_PATH}' \
                       GIT_REF='${git_ref}' \
                       GITHUB_SHA='${GITHUB_SHA}' \
-                      REPO_URL='${repo_url}' \
                       bash -s" <<'EOF'
                   set -euo pipefail
 
@@ -145,11 +145,10 @@ jobs:
                   trap cleanup EXIT
 
                   cd "$repo_path"
-                  git fetch --depth=1 "$REPO_URL" "$GIT_REF"
 
                   git worktree remove --force "$build_path" >/dev/null 2>&1 || true
                   rm -rf "$build_path"
-                  git worktree add --force --detach "$build_path" FETCH_HEAD
+                  git worktree add --force --detach "$build_path" refs/ci/deploy
 
                   cd "$build_path"
                   bun install
