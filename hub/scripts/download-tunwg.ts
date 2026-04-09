@@ -19,7 +19,7 @@ const TUNWG_RELEASES: Record<string, string> = {
     'x64-win32': 'https://github.com/tiann/tunwg/releases/latest/download/tunwg.exe'
 };
 
-const LICENSE_URL = 'https://raw.githubusercontent.com/tiann/tunwg/refs/heads/main/LICENSE';
+const LICENSE_URL = 'https://raw.githubusercontent.com/tiann/tunwg/refs/heads/master/LICENSE';
 
 async function downloadFile(url: string, destPath: string): Promise<void> {
     console.log(`Downloading ${url}...`);

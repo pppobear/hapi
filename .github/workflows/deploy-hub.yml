@@ -122,7 +122,7 @@ jobs:
                   curl -fsSL -o /tmp/tunwg/tunwg-x64-win32.exe \
                       "https://github.com/tiann/tunwg/releases/latest/download/tunwg.exe"
                   curl -fsSL -o /tmp/tunwg/LICENSE \
-                      "https://raw.githubusercontent.com/tiann/tunwg/refs/heads/main/LICENSE"
+                      "https://raw.githubusercontent.com/tiann/tunwg/refs/heads/master/LICENSE"
 
             - name: Push code to remote
               run: |
