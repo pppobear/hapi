@@ -119,6 +119,7 @@ jobs:
                   git_ref="${{ github.event.inputs.git_ref || github.ref_name }}"
 
                   # Push code directly to remote repo (remote server cannot reach github.com)
+                  ssh "$DEPLOY_TARGET" "git -C '${HAPI_DEPLOY_REPO_PATH}' config receive.shallowUpdate true"
                   git push --force "${DEPLOY_TARGET}:${HAPI_DEPLOY_REPO_PATH}" "HEAD:refs/ci/deploy"
 
                   ssh "$DEPLOY_TARGET" \
