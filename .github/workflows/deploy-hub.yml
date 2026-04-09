@@ -107,6 +107,29 @@ jobs:
                   deploy_target="${HAPI_DEPLOY_USER}@${HAPI_DEPLOY_HOST}"
                   echo "DEPLOY_TARGET=$deploy_target" >> "$GITHUB_ENV"
 
+            - name: Download tunwg binaries
+              run: |
+                  set -euo pipefail
+                  mkdir -p /tmp/tunwg
+                  curl -fsSL -o /tmp/tunwg/tunwg-x64-linux \
+                      "https://github.com/tiann/tunwg/releases/latest/download/tunwg"
+                  curl -fsSL -o /tmp/tunwg/tunwg-arm64-linux \
+                      "https://github.com/tiann/tunwg/releases/latest/download/tunwg-arm64"
+                  curl -fsSL -o /tmp/tunwg/tunwg-x64-darwin \
+                      "https://github.com/tiann/tunwg/releases/latest/download/tunwg-darwin"
+                  curl -fsSL -o /tmp/tunwg/tunwg-arm64-darwin \
+                      "https://github.com/tiann/tunwg/releases/latest/download/tunwg-darwin-arm64"
+                  curl -fsSL -o /tmp/tunwg/tunwg-x64-win32.exe \
+                      "https://github.com/tiann/tunwg/releases/latest/download/tunwg.exe"
+                  curl -fsSL -o /tmp/tunwg/LICENSE \
+                      "https://raw.githubusercontent.com/tiann/tunwg/refs/heads/main/LICENSE"
+
+            - name: Push code to remote
+              run: |
+                  set -euo pipefail
+                  ssh "$DEPLOY_TARGET" "git -C '${HAPI_DEPLOY_REPO_PATH}' config receive.shallowUpdate true"
+                  git push --force "${DEPLOY_TARGET}:${HAPI_DEPLOY_REPO_PATH}" "HEAD:refs/ci/deploy"
+
             - name: Build and activate on remote
               run: |
                   set -euo pipefail
@@ -116,18 +139,35 @@ jobs:
                       restart_runner="true"
                   fi
 
-                  git_ref="${{ github.event.inputs.git_ref || github.ref_name }}"
+                  build_path="${HAPI_DEPLOY_ROOT}/builds/${GITHUB_SHA}"
 
-                  # Push code directly to remote repo (remote server cannot reach github.com)
-                  ssh "$DEPLOY_TARGET" "git -C '${HAPI_DEPLOY_REPO_PATH}' config receive.shallowUpdate true"
-                  git push --force "${DEPLOY_TARGET}:${HAPI_DEPLOY_REPO_PATH}" "HEAD:refs/ci/deploy"
+                  # Create worktree on remote
+                  ssh "$DEPLOY_TARGET" \
+                      "HAPI_DEPLOY_ROOT='${HAPI_DEPLOY_ROOT}' \
+                      HAPI_DEPLOY_REPO_PATH='${HAPI_DEPLOY_REPO_PATH}' \
+                      GITHUB_SHA='${GITHUB_SHA}' \
+                      bash -s" <<'SETUP'
+                  set -euo pipefail
+                  build_root="${HAPI_DEPLOY_ROOT}/builds"
+                  build_path="${build_root}/${GITHUB_SHA}"
+                  install -d "$build_root"
+                  cd "${HAPI_DEPLOY_REPO_PATH}"
+                  git worktree remove --force "$build_path" >/dev/null 2>&1 || true
+                  rm -rf "$build_path"
+                  git worktree add --force --detach "$build_path" refs/ci/deploy
+                  mkdir -p "$build_path/hub/tools/tunwg"
+                  SETUP
 
+                  # Upload tunwg binaries (remote cannot reach github.com)
+                  scp /tmp/tunwg/* "$DEPLOY_TARGET:${build_path}/hub/tools/tunwg/"
+                  ssh "$DEPLOY_TARGET" "chmod 755 ${build_path}/hub/tools/tunwg/tunwg-*"
+
+                  # Build and deploy
                   ssh "$DEPLOY_TARGET" \
                       "HAPI_DEPLOY_ROOT='${HAPI_DEPLOY_ROOT}' \
                       HAPI_DEPLOY_KEEP_RELEASES='${HAPI_DEPLOY_KEEP_RELEASES}' \
                       HAPI_DEPLOY_RESTART_RUNNER='${restart_runner}' \
                       HAPI_DEPLOY_REPO_PATH='${HAPI_DEPLOY_REPO_PATH}' \
-                      GIT_REF='${git_ref}' \
                       GITHUB_SHA='${GITHUB_SHA}' \
                       bash -s" <<'EOF'
                   set -euo pipefail
@@ -135,21 +175,12 @@ jobs:
                   export PATH="$HOME/.bun/bin:$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:$PATH"
 
                   repo_path="${HAPI_DEPLOY_REPO_PATH}"
-                  build_root="${HAPI_DEPLOY_ROOT}/builds"
-                  build_path="${build_root}/${GITHUB_SHA}"
-
-                  install -d "$build_root"
+                  build_path="${HAPI_DEPLOY_ROOT}/builds/${GITHUB_SHA}"
 
                   cleanup() {
                       git -C "$repo_path" worktree remove --force "$build_path" >/dev/null 2>&1 || true
                   }
                   trap cleanup EXIT
-
-                  cd "$repo_path"
-
-                  git worktree remove --force "$build_path" >/dev/null 2>&1 || true
-                  rm -rf "$build_path"
-                  git worktree add --force --detach "$build_path" refs/ci/deploy
 
                   cd "$build_path"
                   bun install
