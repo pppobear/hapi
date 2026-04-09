@@ -1,3 +1,5 @@
+import { GEMINI_MODEL_PRESETS, GEMINI_MODEL_LABELS } from '@hapi/protocol'
+
 export type AgentType = 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'
 export type SessionType = 'simple' | 'worktree'
 export type CodexReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh'
@@ -14,6 +16,7 @@ export const MODEL_OPTIONS: Record<AgentType, { value: string; label: string }[]
     codex: [
         { value: 'auto', label: 'Auto' },
         { value: 'gpt-5.4', label: 'GPT-5.4' },
+        { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
         { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
         { value: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
         { value: 'gpt-5.2', label: 'GPT-5.2' },
@@ -22,10 +25,8 @@ export const MODEL_OPTIONS: Record<AgentType, { value: string; label: string }[]
     ],
     cursor: [],
     gemini: [
-        { value: 'auto', label: 'Auto' },
-        { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
-        { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-        { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+        { value: 'auto', label: 'Default' },
+        ...GEMINI_MODEL_PRESETS.map(m => ({ value: m, label: GEMINI_MODEL_LABELS[m] })),
     ],
     opencode: [],
 }

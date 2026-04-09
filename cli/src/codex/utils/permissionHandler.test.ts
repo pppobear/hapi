@@ -35,6 +35,23 @@ function createHarness(mode: 'default' | 'read-only' | 'safe-yolo' | 'yolo') {
 }
 
 describe('CodexPermissionHandler', () => {
+    it('auto-approves change_title tools in default mode', async () => {
+        const { handler, getAgentState } = createHarness('default');
+
+        await expect(handler.handleToolCall('perm-1', 'mcp__hapi__change_title', { title: 'Rename' })).resolves.toEqual({
+            decision: 'approved'
+        });
+
+        expect(getAgentState().requests).toEqual({});
+        expect(getAgentState().completedRequests).toMatchObject({
+            'perm-1': {
+                tool: 'mcp__hapi__change_title',
+                status: 'approved',
+                decision: 'approved'
+            }
+        });
+    });
+
     it('auto-approves yolo requests for the session', async () => {
         const { handler, getAgentState } = createHarness('yolo');
 
@@ -115,5 +132,44 @@ describe('CodexPermissionHandler', () => {
 
         handler.reset();
         await expect(patchPromise).rejects.toThrow('Session reset');
+    });
+
+    it('keeps request_user_input pending until answers arrive and stores nested answers', async () => {
+        const { handler, rpcHandlers, getAgentState } = createHarness('default');
+        const resultPromise = handler.handleUserInputRequest('input-1', {
+            questions: [{ id: 'approve_nav', question: 'Approve app tool call?' }]
+        });
+
+        expect(getAgentState().requests).toMatchObject({
+            'input-1': {
+                tool: 'request_user_input'
+            }
+        });
+
+        const permissionRpc = rpcHandlers.get('permission');
+        expect(permissionRpc).toBeTypeOf('function');
+
+        const answers = {
+            approve_nav: {
+                answers: ['Allow']
+            }
+        };
+
+        await permissionRpc?.({
+            id: 'input-1',
+            approved: true,
+            answers
+        });
+
+        await expect(resultPromise).resolves.toEqual(answers);
+
+        expect(getAgentState().requests).toEqual({});
+        expect(getAgentState().completedRequests).toMatchObject({
+            'input-1': {
+                tool: 'request_user_input',
+                status: 'approved',
+                answers
+            }
+        });
     });
 });
