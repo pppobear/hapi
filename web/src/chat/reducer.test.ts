@@ -89,6 +89,7 @@ describe('reduceChatBlocks', () => {
                 content: [{
                     type: 'sidechain',
                     uuid: 'uuid-sidechain-root',
+                    parentUUID: null,
                     prompt: 'Investigate the bug'
                 }]
             },
