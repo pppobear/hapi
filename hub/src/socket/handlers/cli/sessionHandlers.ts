@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import type { CodexCollaborationMode, PermissionMode } from '@hapi/protocol/types'
 import type { Store, StoredSession } from '../../../store'
 import type { SyncEvent } from '../../../sync/syncEngine'
+import { mergeSessionMetadata } from '../../../sync/sessionMetadata'
 import { extractTodoWriteTodosFromMessageContent } from '../../../sync/todos'
 import { extractTeamStateFromMessageContent, applyTeamStateDelta } from '../../../sync/teams'
 import type { CliSocketWithData } from '../../socketTypes'
@@ -154,9 +155,12 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
             return
         }
 
+        const currentSession = store.sessions.getSessionByNamespace(sid, sessionAccess.value.namespace)
+        const mergedMetadata = mergeSessionMetadata(currentSession?.metadata ?? null, metadata)
+
         const result = store.sessions.updateSessionMetadata(
             sid,
-            metadata,
+            mergedMetadata,
             expectedVersion,
             sessionAccess.value.namespace
         )
@@ -176,7 +180,7 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
                 body: {
                     t: 'update-session' as const,
                     sid,
-                    metadata: { version: result.version, value: metadata },
+                    metadata: { version: result.version, value: mergedMetadata },
                     agentState: null
                 }
             }
