@@ -96,18 +96,22 @@ describe('spawnHappyCLI windowsHide behavior', () => {
   });
 
   it('forces Bun child processes to run with the cli project root as cwd', async () => {
+    const { join } = await import('node:path');
     const { getHappyCliCommand } = await import('./spawnHappyCLI');
+    const { projectPath } = await import('@/projectPath');
 
     const command = getHappyCliCommand(['mcp', '--url', 'http://127.0.0.1:1234/']);
     const isBunRuntime = Boolean((process.versions as Record<string, string | undefined>).bun);
+    const expectedProjectRoot = projectPath().replace(/\\/g, '/');
+    const expectedEntrypoint = join(projectPath(), 'src', 'index.ts').replace(/\\/g, '/');
 
     expect(command.command).toBe(process.execPath);
     if (isBunRuntime) {
       expect(command.args[0]).toBe('--cwd');
-      expect(command.args[1].replace(/\\/g, '/')).toMatch(/\/hapi\/cli$/);
-      expect(command.args[2].replace(/\\/g, '/')).toMatch(/\/hapi\/cli\/src\/index\.ts$/);
+      expect(command.args[1].replace(/\\/g, '/')).toBe(expectedProjectRoot);
+      expect(command.args[2].replace(/\\/g, '/')).toBe(expectedEntrypoint);
     } else {
-      expect(command.args.some((arg) => arg.replace(/\\/g, '/').endsWith('/hapi/cli/src/index.ts'))).toBe(true);
+      expect(command.args.some((arg) => arg.replace(/\\/g, '/') === expectedEntrypoint)).toBe(true);
     }
   });
 
