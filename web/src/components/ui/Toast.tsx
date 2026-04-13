@@ -3,11 +3,12 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 const toastVariants = cva(
-    'pointer-events-auto w-full max-w-sm rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] text-[var(--app-fg)] shadow-lg',
+    'pointer-events-auto w-full max-w-sm rounded-lg border text-[var(--app-fg)] shadow-lg transition-all',
     {
         variants: {
             variant: {
-                default: 'border-[var(--app-border)] bg-[var(--app-bg)]'
+                default: 'border-[var(--app-border)] bg-[var(--app-bg)]',
+                success: 'border-emerald-500/30 bg-emerald-500/10 shadow-emerald-500/10 ring-1 ring-emerald-500/20'
             }
         },
         defaultVariants: {
@@ -20,10 +21,31 @@ export type ToastProps = React.HTMLAttributes<HTMLDivElement> &
     VariantProps<typeof toastVariants> & {
     title: string
     body: string
+    actionLabel?: string
     onClose?: () => void
 }
 
-export function Toast({ title, body, onClose, className, variant, ...props }: ToastProps) {
+function ArrowRightIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <path d="M5 12h14" />
+            <path d="m12 5 7 7-7 7" />
+        </svg>
+    )
+}
+
+export function Toast({ title, body, actionLabel, onClose, className, variant, ...props }: ToastProps) {
     const handleClose = (event: React.MouseEvent<HTMLButtonElement>) => {
         event.stopPropagation()
         onClose?.()
@@ -35,6 +57,12 @@ export function Toast({ title, body, onClose, className, variant, ...props }: To
                 <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold leading-5">{title}</div>
                     <div className="mt-1 text-xs text-[var(--app-hint)]">{body}</div>
+                    {actionLabel ? (
+                        <div className="mt-2 inline-flex items-center gap-1 rounded-full bg-[var(--app-bg)]/80 px-2.5 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-500/20 dark:text-emerald-300">
+                            <span>{actionLabel}</span>
+                            <ArrowRightIcon className="h-3.5 w-3.5" />
+                        </div>
+                    ) : null}
                 </div>
                 {onClose ? (
                     <button
