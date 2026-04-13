@@ -239,6 +239,7 @@ describe('session model', () => {
                 _sessionType?: string,
                 _worktreeName?: string,
                 _resumeSessionId?: string,
+                _forkSessionId?: string,
                 effort?: string
             ) => {
                 capturedModel = model
@@ -298,7 +299,8 @@ describe('session model', () => {
                 _yolo?: boolean,
                 _sessionType?: 'simple' | 'worktree',
                 _worktreeName?: string,
-                resumeSessionId?: string
+                resumeSessionId?: string,
+                _forkSessionId?: string
             ) => {
                 capturedResumeSessionId = resumeSessionId
                 return { type: 'success', sessionId: session.id }
@@ -309,6 +311,67 @@ describe('session model', () => {
 
             expect(result).toEqual({ type: 'success', sessionId: session.id })
             expect(capturedResumeSessionId).toBe('claude-session-1')
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('passes fork session ID to rpc gateway when forking codex session', async () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'session-codex-fork',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'codex',
+                    codexSessionId: 'codex-thread-1'
+                },
+                null,
+                'default',
+                'gpt-5.4'
+            )
+            engine.getOrCreateMachine(
+                'machine-1',
+                { host: 'localhost', platform: 'linux', happyCliVersion: '0.1.0' },
+                null,
+                'default'
+            )
+            engine.handleMachineAlive({ machineId: 'machine-1', time: Date.now() })
+
+            let capturedForkSessionId: string | undefined
+            let capturedModel: string | undefined
+            ;(engine as any).rpcGateway.spawnSession = async (
+                _machineId: string,
+                _directory: string,
+                _agent: string,
+                model?: string,
+                _modelReasoningEffort?: string,
+                _yolo?: boolean,
+                _sessionType?: 'simple' | 'worktree',
+                _worktreeName?: string,
+                _resumeSessionId?: string,
+                forkSessionId?: string
+            ) => {
+                capturedModel = model
+                capturedForkSessionId = forkSessionId
+                return { type: 'success', sessionId: 'forked-session' }
+            }
+            ;(engine as any).waitForSessionActive = async () => true
+
+            const result = await engine.forkSession(session.id, 'default')
+
+            expect(result).toEqual({ type: 'success', sessionId: 'forked-session' })
+            expect(capturedForkSessionId).toBe('codex-thread-1')
+            expect(capturedModel).toBe('gpt-5.4')
         } finally {
             engine.stop()
         }

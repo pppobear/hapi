@@ -10,6 +10,7 @@ import { BaseLocalLauncher } from '@/modules/common/launcher/BaseLocalLauncher';
 
 export async function codexLocalLauncher(session: CodexSession): Promise<'switch' | 'exit'> {
     const resumeSessionId = session.sessionId;
+    const forkSessionId = session.forkSessionId;
     let scanner: Awaited<ReturnType<typeof createCodexSessionScanner>> | null = null;
     const permissionMode = session.getPermissionMode();
     const managedPermissionMode = permissionMode === 'read-only' || permissionMode === 'safe-yolo' || permissionMode === 'yolo'
@@ -41,7 +42,8 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
         launch: async (abortSignal) => {
             await codexLocal({
                 path: session.path,
-                sessionId: resumeSessionId,
+                resumeSessionId,
+                forkSessionId,
                 onSessionFound: handleSessionFound,
                 abort: abortSignal,
                 codexArgs,

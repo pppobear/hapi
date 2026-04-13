@@ -9,6 +9,7 @@ import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { getSessionModelLabel } from '@/lib/sessionModelLabel'
 import { useTranslation } from '@/lib/use-translation'
+import { useToast } from '@/lib/toast-context'
 
 type SessionGroup = {
     directory: string
@@ -170,6 +171,7 @@ function SessionItem(props: {
     selected?: boolean
 }) {
     const { t } = useTranslation()
+    const { addToast } = useToast()
     const { session: s, onSelect, showPath = true, api, selected = false } = props
     const { haptic } = usePlatform()
     const [menuOpen, setMenuOpen] = useState(false)
@@ -178,11 +180,36 @@ function SessionItem(props: {
     const [archiveOpen, setArchiveOpen] = useState(false)
     const [deleteOpen, setDeleteOpen] = useState(false)
 
-    const { archiveSession, renameSession, deleteSession, isPending } = useSessionActions(
+    const canFork = s.metadata?.flavor === 'codex'
+
+    const { archiveSession, forkSession, renameSession, deleteSession, isPending } = useSessionActions(
         api,
         s.id,
         s.metadata?.flavor ?? null
     )
+
+    const handleFork = async () => {
+        try {
+            const newSessionId = await forkSession()
+            addToast({
+                title: t('dialog.fork.successTitle'),
+                body: t('dialog.fork.successDescription', { name: sessionName }),
+                sessionId: newSessionId,
+                url: `/sessions/${newSessionId}`,
+                variant: 'success',
+                actionLabel: t('toast.action.openSession')
+            })
+            onSelect(newSessionId)
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Fork failed'
+            addToast({
+                title: t('dialog.fork.failedTitle'),
+                body: message,
+                sessionId: s.id,
+                url: `/sessions/${s.id}`
+            })
+        }
+    }
 
     const longPressHandlers = useLongPress({
         onLongPress: (point) => {
@@ -274,7 +301,9 @@ function SessionItem(props: {
                 isOpen={menuOpen}
                 onClose={() => setMenuOpen(false)}
                 sessionActive={s.active}
+                canFork={canFork}
                 onRename={() => setRenameOpen(true)}
+                onFork={handleFork}
                 onArchive={() => setArchiveOpen(true)}
                 onDelete={() => setDeleteOpen(true)}
                 anchorPoint={menuAnchorPoint}
