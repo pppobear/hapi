@@ -136,8 +136,6 @@ jobs:
                   rsync -az --delete \
                       --exclude='.git/' \
                       --exclude='.github/' \
-                      --exclude='docs/' \
-                      --exclude='website/' \
                       --exclude='node_modules/' \
                       --exclude='*/node_modules/' \
                       --exclude='cli/dist-exe/' \
@@ -182,7 +180,9 @@ jobs:
                           cli/package.json \
                           hub/package.json \
                           shared/package.json \
-                          web/package.json | sha256sum | awk '{print $1}'
+                          web/package.json \
+                          website/package.json \
+                          docs/package.json | sha256sum | awk '{print $1}'
                   )"
                   previous_deps_fingerprint="$(cat "$deps_fingerprint_path" 2>/dev/null || true)"
 
