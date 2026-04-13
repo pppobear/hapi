@@ -14,7 +14,7 @@ import type { EnhancedMode } from './loop';
 import { hasCodexCliOverrides } from './utils/codexCliOverrides';
 import { AppServerEventConverter } from './utils/appServerEventConverter';
 import { registerAppServerPermissionHandlers } from './utils/appServerPermissionAdapter';
-import { buildThreadStartParams, buildTurnStartParams } from './utils/appServerConfig';
+import { buildThreadForkParams, buildThreadStartParams, buildTurnStartParams } from './utils/appServerConfig';
 import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
 import { parseCodexSpecialCommand } from './codexSpecialCommands';
 import {
@@ -598,6 +598,23 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             session.sendSessionEvent({ type: 'ready' });
         };
 
+        const buildInitialMode = (): EnhancedMode => {
+            const rawPermissionMode = session.getPermissionMode();
+            const permissionMode = rawPermissionMode === 'default'
+                || rawPermissionMode === 'read-only'
+                || rawPermissionMode === 'safe-yolo'
+                || rawPermissionMode === 'yolo'
+                ? rawPermissionMode
+                : 'default';
+            const rawCollaborationMode = session.getCollaborationMode?.();
+            const collaborationMode = rawCollaborationMode === 'plan' ? 'plan' : 'default';
+            return {
+                permissionMode,
+                model: session.getModel() ?? undefined,
+                collaborationMode
+            };
+        };
+
         await appServerClient.connect();
         await appServerClient.initialize({
             clientInfo: {
@@ -611,6 +628,29 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
         let hasThread = false;
         let pending: QueuedMessage | null = null;
+
+        if (session.forkSessionId) {
+            const forkResponse = await appServerClient.forkThread(buildThreadForkParams({
+                threadId: session.forkSessionId,
+                cwd: session.path,
+                mode: buildInitialMode(),
+                mcpServers,
+                cliOverrides: session.codexCliOverrides
+            }), {
+                signal: this.abortController.signal
+            });
+            const forkRecord = asRecord(forkResponse);
+            const forkThread = forkRecord ? asRecord(forkRecord.thread) : null;
+            const forkedThreadId = asString(forkThread?.id);
+            if (!forkedThreadId) {
+                throw new Error('app-server thread/fork did not return thread.id');
+            }
+            this.currentThreadId = forkedThreadId;
+            session.onSessionFound(forkedThreadId);
+            hasThread = true;
+            applyResolvedModel(forkRecord?.model);
+            sendReady();
+        }
 
         clearReadyAfterTurnTimer = () => {
             if (!readyAfterTurnTimer) {
@@ -788,12 +828,32 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         cliOverrides: session.codexCliOverrides
                     });
 
+                    const forkCandidate = session.forkSessionId;
                     const resumeCandidate = session.sessionId && session.sessionId !== invalidThreadId
                         ? session.sessionId
                         : null;
                     let threadId: string | null = null;
 
-                    if (resumeCandidate) {
+                    if (forkCandidate) {
+                        try {
+                            const forkResponse = await appServerClient.forkThread(buildThreadForkParams({
+                                threadId: forkCandidate,
+                                cwd: session.path,
+                                mode: message.mode,
+                                mcpServers,
+                                cliOverrides: session.codexCliOverrides
+                            }), {
+                                signal: this.abortController.signal
+                            });
+                            const forkRecord = asRecord(forkResponse);
+                            const forkThread = forkRecord ? asRecord(forkRecord.thread) : null;
+                            threadId = asString(forkThread?.id);
+                            applyResolvedModel(forkRecord?.model);
+                            logger.debug(`[Codex] Forked app-server thread ${forkCandidate} -> ${threadId ?? 'unknown'}`);
+                        } catch (error) {
+                            logger.warn(`[Codex] Failed to fork app-server thread ${forkCandidate}, starting new thread`, error);
+                        }
+                    } else if (resumeCandidate) {
                         try {
                             const resumeResponse = await appServerClient.resumeThread({
                                 threadId: resumeCandidate,

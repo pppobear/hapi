@@ -12,7 +12,27 @@ const harness = vi.hoisted(() => ({
     interruptedTurns: [] as Array<{ threadId: string; turnId: string }>,
     compactThreadIds: [] as string[],
     suppressTurnCompletion: false,
-    remainingThreadSystemErrors: 0
+    remainingThreadSystemErrors: 0,
+    forkCalls: [] as unknown[]
+}));
+
+vi.mock('react', () => ({
+    default: {
+        createElement: () => ({})
+    }
+}));
+
+vi.mock('ink', () => ({
+    render: () => ({
+        unmount: () => {}
+    })
+}));
+
+vi.mock('@/ui/logger', () => ({
+    logger: {
+        debug: () => {},
+        warn: () => {}
+    }
 }));
 
 vi.mock('./codexAppServerClient', () => {
@@ -44,6 +64,11 @@ vi.mock('./codexAppServerClient', () => {
             const id = params?.threadId ?? 'thread-resumed';
             harness.resumeThreadIds.push(id);
             return { thread: { id }, model: 'gpt-5.4' };
+        }
+
+        async forkThread(params: unknown): Promise<{ thread: { id: string }; model: string }> {
+            harness.forkCalls.push(params);
+            return { thread: { id: 'thread-forked' }, model: 'gpt-5.4' };
         }
 
         async startTurn(params?: { threadId?: string }): Promise<{ turn: { id?: string } }> {
@@ -144,7 +169,8 @@ function createMode(): EnhancedMode {
     };
 }
 
-function createSessionStub(messages = ['hello from launcher test']) {
+function createSessionStub(opts?: { messages?: string[]; forkSessionId?: string | null }) {
+    const messages = opts?.messages ?? ['hello from launcher test'];
     const queue = new MessageQueue2<EnhancedMode>((mode) => JSON.stringify(mode));
     messages.forEach((message, index) => {
         if (index === 0 && messages.length > 1) {
@@ -193,8 +219,12 @@ function createSessionStub(messages = ['hello from launcher test']) {
         codexArgs: undefined,
         codexCliOverrides: undefined,
         sessionId: null as string | null,
+        forkSessionId: opts?.forkSessionId ?? undefined,
         thinking: false,
         getPermissionMode() {
+            return 'default' as const;
+        },
+        getCollaborationMode() {
             return 'default' as const;
         },
         setModel(nextModel: string | null) {
@@ -251,6 +281,7 @@ describe('codexRemoteLauncher', () => {
         harness.compactThreadIds = [];
         harness.suppressTurnCompletion = false;
         harness.remainingThreadSystemErrors = 0;
+        harness.forkCalls = [];
     });
 
     it('finishes a turn and emits ready when task lifecycle events include turn_id', async () => {
@@ -305,7 +336,7 @@ describe('codexRemoteLauncher', () => {
 
     it('starts a fresh thread for the next queued message after thread-level systemError', async () => {
         harness.remainingThreadSystemErrors = 1;
-        const { session } = createSessionStub(['first message', 'second message']);
+        const { session } = createSessionStub({ messages: ['first message', 'second message'] });
 
         const exitReason = await codexRemoteLauncher(session as never);
 
@@ -341,8 +372,26 @@ describe('codexRemoteLauncher', () => {
         }));
     });
 
+    it('forks the source thread before starting a turn when forkSessionId is provided', async () => {
+        const {
+            session,
+            foundSessionIds
+        } = createSessionStub({ forkSessionId: 'thread-source' });
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(harness.forkCalls).toHaveLength(1);
+        expect(harness.forkCalls[0]).toMatchObject({
+            threadId: 'thread-source',
+            cwd: '/tmp/hapi-update',
+            persistExtendedHistory: true
+        });
+        expect(foundSessionIds).toContain('thread-forked');
+    });
+
     it('clears codex thread state without starting a turn', async () => {
-        const { session, sessionEvents, resetThreadCalls } = createSessionStub(['/clear', 'next message']);
+        const { session, sessionEvents, resetThreadCalls } = createSessionStub({ messages: ['/clear', 'next message'] });
 
         const exitReason = await codexRemoteLauncher(session as never);
 
@@ -359,7 +408,7 @@ describe('codexRemoteLauncher', () => {
 
     it('interrupts an in-flight turn before clearing codex thread state', async () => {
         harness.suppressTurnCompletion = true;
-        const { session, sessionEvents, resetThreadCalls } = createSessionStub(['first message', '/clear']);
+        const { session, sessionEvents, resetThreadCalls } = createSessionStub({ messages: ['first message', '/clear'] });
 
         const exitReason = await codexRemoteLauncher(session as never);
 
@@ -376,7 +425,7 @@ describe('codexRemoteLauncher', () => {
     });
 
     it('compacts the current thread without starting a turn', async () => {
-        const { session, sessionEvents } = createSessionStub(['first message', '/compact']);
+        const { session, sessionEvents } = createSessionStub({ messages: ['first message', '/compact'] });
 
         const exitReason = await codexRemoteLauncher(session as never);
 
@@ -396,7 +445,7 @@ describe('codexRemoteLauncher', () => {
 
     it('interrupts an in-flight turn before compacting the current thread', async () => {
         harness.suppressTurnCompletion = true;
-        const { session, sessionEvents } = createSessionStub(['first message', '/compact']);
+        const { session, sessionEvents } = createSessionStub({ messages: ['first message', '/compact'] });
 
         const exitReason = await codexRemoteLauncher(session as never);
 
@@ -413,7 +462,7 @@ describe('codexRemoteLauncher', () => {
     });
 
     it('reports nothing to compact when no codex thread exists', async () => {
-        const { session, sessionEvents } = createSessionStub(['/compact']);
+        const { session, sessionEvents } = createSessionStub({ messages: ['/compact'] });
 
         const exitReason = await codexRemoteLauncher(session as never);
 
@@ -428,7 +477,7 @@ describe('codexRemoteLauncher', () => {
     });
 
     it('rejects argument-bearing codex slash commands without starting a turn', async () => {
-        const { session, sessionEvents } = createSessionStub(['/compact now']);
+        const { session, sessionEvents } = createSessionStub({ messages: ['/compact now'] });
 
         const exitReason = await codexRemoteLauncher(session as never);
 

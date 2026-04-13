@@ -50,6 +50,10 @@ export type ResumeSessionResult =
     | { type: 'success'; sessionId: string }
     | { type: 'error'; message: string; code: 'session_not_found' | 'access_denied' | 'no_machine_online' | 'resume_unavailable' | 'resume_failed' }
 
+export type ForkSessionResult =
+    | { type: 'success'; sessionId: string }
+    | { type: 'error'; message: string; code: 'session_not_found' | 'access_denied' | 'no_machine_online' | 'fork_unavailable' | 'fork_failed' }
+
 export class SyncEngine {
     private readonly eventPublisher: EventPublisher
     private readonly sessionCache: SessionCache
@@ -402,6 +406,7 @@ export class SyncEngine {
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
         resumeSessionId?: string,
+        forkSessionId?: string,
         effort?: string,
         permissionMode?: PermissionMode
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
@@ -415,6 +420,7 @@ export class SyncEngine {
             sessionType,
             worktreeName,
             resumeSessionId,
+            forkSessionId,
             effort,
             permissionMode
         )
@@ -489,6 +495,7 @@ export class SyncEngine {
             undefined,
             undefined,
             resumeToken,
+            undefined,
             session.effort ?? undefined,
             effectivePermissionMode
         )
@@ -538,6 +545,79 @@ export class SyncEngine {
                 // best-effort: web-side safety net hides remaining duplicates
             })
         }
+    }
+
+    async forkSession(sessionId: string, namespace: string): Promise<ForkSessionResult> {
+        const access = this.sessionCache.resolveSessionAccess(sessionId, namespace)
+        if (!access.ok) {
+            return {
+                type: 'error',
+                message: access.reason === 'access-denied' ? 'Session access denied' : 'Session not found',
+                code: access.reason === 'access-denied' ? 'access_denied' : 'session_not_found'
+            }
+        }
+
+        const session = access.session
+        const metadata = session.metadata
+        if (!metadata || typeof metadata.path !== 'string') {
+            return { type: 'error', message: 'Session metadata missing path', code: 'fork_unavailable' }
+        }
+
+        if (metadata.flavor !== 'codex') {
+            return { type: 'error', message: 'Fork is only supported for Codex sessions', code: 'fork_unavailable' }
+        }
+
+        const forkToken = metadata.codexSessionId
+        if (!forkToken) {
+            return { type: 'error', message: 'Fork session ID unavailable', code: 'fork_unavailable' }
+        }
+
+        const onlineMachines = this.machineCache.getOnlineMachinesByNamespace(namespace)
+        if (onlineMachines.length === 0) {
+            return { type: 'error', message: 'No machine online', code: 'no_machine_online' }
+        }
+
+        const targetMachine = (() => {
+            if (metadata.machineId) {
+                const exact = onlineMachines.find((machine) => machine.id === metadata.machineId)
+                if (exact) return exact
+            }
+            if (metadata.host) {
+                const hostMatch = onlineMachines.find((machine) => machine.metadata?.host === metadata.host)
+                if (hostMatch) return hostMatch
+            }
+            return null
+        })()
+
+        if (!targetMachine) {
+            return { type: 'error', message: 'No machine online', code: 'no_machine_online' }
+        }
+
+        const spawnResult = await this.rpcGateway.spawnSession(
+            targetMachine.id,
+            metadata.path,
+            'codex',
+            session.model ?? undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            forkToken,
+            session.effort ?? undefined,
+            session.permissionMode ?? undefined
+        )
+
+        if (spawnResult.type !== 'success') {
+            return { type: 'error', message: spawnResult.message, code: 'fork_failed' }
+        }
+
+        const becameActive = await this.waitForSessionActive(spawnResult.sessionId)
+        if (!becameActive) {
+            return { type: 'error', message: 'Session failed to become active', code: 'fork_failed' }
+        }
+
+        return { type: 'success', sessionId: spawnResult.sessionId }
     }
 
     async waitForSessionActive(sessionId: string, timeoutMs: number = 15_000): Promise<boolean> {
