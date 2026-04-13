@@ -34,6 +34,7 @@ export const codexCommand: CommandDefinition = {
                 codexArgs?: string[]
                 permissionMode?: CodexPermissionMode
                 resumeSessionId?: string
+                forkSessionId?: string
                 model?: string
                 modelReasoningEffort?: ReasoningEffort
             } = {}
@@ -48,6 +49,15 @@ export const codexCommand: CommandDefinition = {
                         throw new Error('resume requires a session id')
                     }
                     options.resumeSessionId = candidate
+                    i += 1
+                    continue
+                }
+                if (i === 0 && arg === 'fork') {
+                    const candidate = commandArgs[i + 1]
+                    if (!candidate || candidate.startsWith('-')) {
+                        throw new Error('fork requires a session id')
+                    }
+                    options.forkSessionId = candidate
                     i += 1
                     continue
                 }
