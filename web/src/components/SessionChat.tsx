@@ -16,8 +16,10 @@ import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { reduceChatBlocks } from '@/chat/reducer'
 import { reconcileChatBlocks } from '@/chat/reconcile'
 import { buildConversationOutline } from '@/chat/outline'
+import { isQueuedForInvocation } from '@/lib/messages'
 import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
+import { QueuedMessagesBar } from '@/components/AssistantChat/QueuedMessagesBar'
 import { useHappyRuntime } from '@/lib/assistant-runtime'
 import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
 import { useTranslation } from '@/lib/use-translation'
@@ -209,6 +211,15 @@ export function SessionChat(props: {
         setOutlineOpen(false)
     }, [props.session.id])
 
+    // Exclude user messages that haven't been invoked yet — those appear in the
+    // QueuedMessagesBar above the composer, not in the thread timeline. The
+    // `isQueuedForInvocation` predicate is shared with the window store and the
+    // floating bar so the three views never disagree about queued state.
+    const visibleMessages = useMemo(
+        () => props.messages.filter((m) => !isQueuedForInvocation(m)),
+        [props.messages]
+    )
+
     const normalizedMessages: NormalizedMessage[] = useMemo(() => {
         // Clear caches immediately when session changes (before useEffect runs)
         if (prevSessionIdRef.current !== null && prevSessionIdRef.current !== props.session.id) {
@@ -220,7 +231,7 @@ export function SessionChat(props: {
         const cache = normalizedCacheRef.current
         const normalized: NormalizedMessage[] = []
         const seen = new Set<string>()
-        for (const message of props.messages) {
+        for (const message of visibleMessages) {
             seen.add(message.id)
             const cached = cache.get(message.id)
             if (cached && cached.source === message) {
@@ -237,7 +248,7 @@ export function SessionChat(props: {
             }
         }
         return normalized
-    }, [props.messages])
+    }, [visibleMessages])
 
     const reduced = useMemo(
         () => reduceChatBlocks(normalizedMessages, props.session.agentState),
@@ -408,7 +419,7 @@ export function SessionChat(props: {
                         isLoadingMoreMessages={props.isLoadingMoreMessages}
                         onLoadMore={props.onLoadMore}
                         pendingCount={props.pendingCount}
-                        rawMessagesCount={props.messages.length}
+                        rawMessagesCount={visibleMessages.length}
                         normalizedMessagesCount={normalizedMessages.length}
                         messagesVersion={props.messagesVersion}
                         forceScrollToken={forceScrollToken}
@@ -425,6 +436,10 @@ export function SessionChat(props: {
                             </div>
                         </div>
                     ) : null}
+
+                    <div className="px-3">
+                        <QueuedMessagesBar sessionId={props.session.id} />
+                    </div>
 
                     <HappyComposer
                         key={props.session.id}
