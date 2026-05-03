@@ -7,7 +7,6 @@ import { CODEX_PERMISSION_MODES } from '@hapi/protocol/modes'
 import type { CodexPermissionMode } from '@hapi/protocol/types'
 import type { ReasoningEffort, ResponseItem } from '@/codex/appServerTypes'
 import { readFile, rm } from 'node:fs/promises'
-import { dirname } from 'node:path'
 import { assertCodexLocalSupported } from '@/codex/utils/codexVersion'
 
 function parseReasoningEffort(value: string): ReasoningEffort {
@@ -100,7 +99,7 @@ export const codexCommand: CommandDefinition = {
                         throw new Error('--fork-history-file must contain a JSON array')
                     }
                     options.forkHistory = parsed as ResponseItem[]
-                    void rm(dirname(file), { recursive: true, force: true }).catch(() => undefined)
+                    void rm(file, { force: true }).catch(() => undefined)
                 } else {
                     unknownArgs.push(arg)
                 }
