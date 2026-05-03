@@ -23,12 +23,16 @@ vi.mock('@assistant-ui/react', () => ({
 }))
 
 vi.mock('@/components/assistant-ui/markdown-text', () => ({
-    MarkdownText: ({ text }: { text: string }) => <span>{text}</span>
+    MarkdownText: () => null
 }))
 
 vi.mock('@/components/assistant-ui/reasoning', () => ({
-    Reasoning: ({ text }: { text: string }) => <span>{text}</span>,
-    ReasoningGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>
+    Reasoning: () => null,
+    ReasoningGroup: () => null
+}))
+
+vi.mock('@/components/AssistantChat/messages/ToolMessage', () => ({
+    HappyToolMessage: () => null
 }))
 
 function renderAssistantMessage(onForkBeforeMessage?: (seq: number) => void) {
@@ -75,7 +79,7 @@ describe('HappyAssistantMessage fork action', () => {
         } as any
     })
 
-    it('shows fork action for assistant responses with a seq', () => {
+    it('shows fork action for assistant messages with a seq', () => {
         const onForkBeforeMessage = vi.fn()
         renderAssistantMessage(onForkBeforeMessage)
 
@@ -84,13 +88,13 @@ describe('HappyAssistantMessage fork action', () => {
         expect(onForkBeforeMessage).toHaveBeenCalledWith(8)
     })
 
-    it('does not show fork action for tool-only assistant messages', () => {
+    it('does not show fork action without a seq', () => {
         state.message = {
             role: 'assistant',
-            id: 'tool:m1',
-            content: [{ type: 'tool-call', toolCallId: 't1', toolName: 'Tool', argsText: '{}' }],
-            metadata: { custom: { kind: 'tool', toolCallId: 't1' } }
-        } as any
+            id: 'assistant:m1',
+            content: [{ type: 'text', text: 'answer' }],
+            metadata: { custom: { kind: 'assistant' } }
+        }
 
         renderAssistantMessage(vi.fn())
 

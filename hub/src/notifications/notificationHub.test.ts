@@ -168,12 +168,12 @@ describe('NotificationHub', () => {
         hub.stop()
     })
 
-    it('suppresses the first ready notification for forked sessions only', async () => {
+    it('suppresses ready notifications for forked sessions during the ready cooldown', async () => {
         const engine = new FakeSyncEngine()
         const channel = new StubChannel()
         const hub = new NotificationHub(engine as unknown as SyncEngine, [channel], {
             permissionDebounceMs: 1,
-            readyCooldownMs: 1
+            readyCooldownMs: 30
         })
 
         const session = createSession({ id: 'forked-session' })
@@ -208,6 +208,11 @@ describe('NotificationHub', () => {
         expect(channel.readySessions).toHaveLength(0)
 
         await sleep(5)
+        engine.emit(readyEvent)
+        await sleep(5)
+        expect(channel.readySessions).toHaveLength(0)
+
+        await sleep(30)
         engine.emit(readyEvent)
         await sleep(5)
         expect(channel.readySessions).toHaveLength(1)
