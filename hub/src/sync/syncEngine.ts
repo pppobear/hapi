@@ -8,6 +8,7 @@
  */
 
 import type { CodexCollaborationMode, DecryptedMessage, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
+import { unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
 import type { RpcRegistry } from '../socket/rpcRegistry'
@@ -404,9 +405,10 @@ export class SyncEngine {
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
         resumeSessionId?: string,
+        forkSessionId?: string,
         effort?: string,
         permissionMode?: PermissionMode,
-        forkSessionId?: string
+        forkHistory?: unknown[]
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         return await this.rpcGateway.spawnSession(
             machineId,
@@ -418,9 +420,10 @@ export class SyncEngine {
             sessionType,
             worktreeName,
             resumeSessionId,
+            forkSessionId,
             effort,
             permissionMode,
-            forkSessionId
+            forkHistory
         )
     }
 
@@ -493,6 +496,7 @@ export class SyncEngine {
             undefined,
             undefined,
             resumeToken,
+            undefined,
             session.effort ?? undefined,
             effectivePermissionMode
         )
@@ -524,7 +528,27 @@ export class SyncEngine {
         return { type: 'success', sessionId: spawnResult.sessionId }
     }
 
-    async forkSession(sessionId: string, namespace: string): Promise<ForkSessionResult> {
+    private hasSameAgentSessionIds(
+        prev: Session['metadata'] | null,
+        next: NonNullable<Session['metadata']>
+    ): boolean {
+        return (prev?.codexSessionId ?? null) === (next.codexSessionId ?? null)
+            && (prev?.claudeSessionId ?? null) === (next.claudeSessionId ?? null)
+            && (prev?.geminiSessionId ?? null) === (next.geminiSessionId ?? null)
+            && (prev?.opencodeSessionId ?? null) === (next.opencodeSessionId ?? null)
+            && (prev?.cursorSessionId ?? null) === (next.cursorSessionId ?? null)
+    }
+
+    private triggerDedupIfNeeded(sessionId: string): void {
+        const session = this.sessionCache.getSession(sessionId)
+        if (session?.metadata) {
+            void this.sessionCache.deduplicateByAgentSessionId(sessionId).catch(() => {
+                // best-effort: web-side safety net hides remaining duplicates
+            })
+        }
+    }
+
+    async forkSession(sessionId: string, namespace: string, opts?: { beforeSeq?: number }): Promise<ForkSessionResult> {
         const access = this.sessionCache.resolveSessionAccess(sessionId, namespace)
         if (!access.ok) {
             return {
@@ -547,6 +571,29 @@ export class SyncEngine {
         const forkToken = metadata.codexSessionId
         if (!forkToken) {
             return { type: 'error', message: 'Fork session ID unavailable', code: 'fork_unavailable' }
+        }
+
+        let forkHistory: unknown[] | undefined
+        let cloneBeforeSeq: number | undefined
+        if (opts?.beforeSeq !== undefined) {
+            if (!Number.isInteger(opts.beforeSeq) || opts.beforeSeq <= 0) {
+                return { type: 'error', message: 'beforeSeq must be a positive integer', code: 'fork_unavailable' }
+            }
+            const cutMessage = this.store.messages.getMessageBySeq(sessionId, opts.beforeSeq)
+            const record = cutMessage ? unwrapRoleWrappedRecordEnvelope(cutMessage.content) : null
+            if (!cutMessage || record?.role !== 'user') {
+                return { type: 'error', message: 'Historical fork cut point must be a user message', code: 'fork_unavailable' }
+            }
+            const prefix = this.store.codexHistory.getPrefixBeforeMessageSeq(sessionId, opts.beforeSeq)
+            if (!prefix) {
+                return {
+                    type: 'error',
+                    message: '历史点 fork 只支持新版本会话',
+                    code: 'fork_unavailable'
+                }
+            }
+            forkHistory = prefix
+            cloneBeforeSeq = opts.beforeSeq
         }
 
         const onlineMachines = this.machineCache.getOnlineMachinesByNamespace(namespace)
@@ -580,9 +627,10 @@ export class SyncEngine {
             undefined,
             undefined,
             undefined,
-            undefined,
-            undefined,
-            forkToken
+            forkHistory ? undefined : forkToken,
+            session.effort ?? undefined,
+            session.permissionMode ?? undefined,
+            forkHistory
         )
 
         if (spawnResult.type !== 'success') {
@@ -594,30 +642,10 @@ export class SyncEngine {
             return { type: 'error', message: 'Session failed to become active', code: 'fork_failed' }
         }
 
-        this.store.messages.cloneSessionMessages(sessionId, spawnResult.sessionId)
+        this.store.messages.cloneSessionMessages(sessionId, spawnResult.sessionId, cloneBeforeSeq)
         await this.sessionCache.inheritSessionMetadata(sessionId, spawnResult.sessionId)
 
         return { type: 'success', sessionId: spawnResult.sessionId }
-    }
-
-    private hasSameAgentSessionIds(
-        prev: Session['metadata'] | null,
-        next: NonNullable<Session['metadata']>
-    ): boolean {
-        return (prev?.codexSessionId ?? null) === (next.codexSessionId ?? null)
-            && (prev?.claudeSessionId ?? null) === (next.claudeSessionId ?? null)
-            && (prev?.geminiSessionId ?? null) === (next.geminiSessionId ?? null)
-            && (prev?.opencodeSessionId ?? null) === (next.opencodeSessionId ?? null)
-            && (prev?.cursorSessionId ?? null) === (next.cursorSessionId ?? null)
-    }
-
-    private triggerDedupIfNeeded(sessionId: string): void {
-        const session = this.sessionCache.getSession(sessionId)
-        if (session?.metadata) {
-            void this.sessionCache.deduplicateByAgentSessionId(sessionId).catch(() => {
-                // best-effort: web-side safety net hides remaining duplicates
-            })
-        }
     }
 
     async waitForSessionActive(sessionId: string, timeoutMs: number = 15_000): Promise<boolean> {

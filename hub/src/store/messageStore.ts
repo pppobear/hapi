@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite'
 
 import type { StoredMessage } from './types'
-import { addMessage, cloneSessionMessages, getMessages, getMessagesAfter, getMessagesByPosition, getUninvokedLocalMessages, markMessagesInvoked, mergeSessionMessages } from './messages'
+import { addMessage, cloneSessionMessages, getMessageBySeq, getMessages, getMessagesAfter, getMessagesByPosition, getUninvokedLocalMessages, markMessagesInvoked, mergeSessionMessages } from './messages'
 
 export class MessageStore {
     private readonly db: Database
@@ -30,6 +30,10 @@ export class MessageStore {
         return getUninvokedLocalMessages(this.db, sessionId)
     }
 
+    getMessageBySeq(sessionId: string, seq: number): StoredMessage | null {
+        return getMessageBySeq(this.db, sessionId, seq)
+    }
+
     markMessagesInvoked(sessionId: string, localIds: string[], invokedAt: number): void {
         markMessagesInvoked(this.db, sessionId, localIds, invokedAt)
     }
@@ -38,7 +42,7 @@ export class MessageStore {
         return mergeSessionMessages(this.db, fromSessionId, toSessionId)
     }
 
-    cloneSessionMessages(fromSessionId: string, toSessionId: string): { cloned: number; sourceMaxSeq: number; targetMaxSeq: number } {
-        return cloneSessionMessages(this.db, fromSessionId, toSessionId)
+    cloneSessionMessages(fromSessionId: string, toSessionId: string, beforeSeq?: number): { cloned: number; sourceMaxSeq: number; targetMaxSeq: number } {
+        return cloneSessionMessages(this.db, fromSessionId, toSessionId, beforeSeq)
     }
 }

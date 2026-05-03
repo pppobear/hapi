@@ -130,9 +130,10 @@ export class RpcGateway {
         sessionType?: 'simple' | 'worktree',
         worktreeName?: string,
         resumeSessionId?: string,
+        forkSessionId?: string,
         effort?: string,
         permissionMode?: PermissionMode,
-        forkSessionId?: string
+        forkHistory?: unknown[]
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         try {
             const result = await this.machineRpc(
@@ -148,9 +149,10 @@ export class RpcGateway {
                     sessionType,
                     worktreeName,
                     resumeSessionId,
+                    forkSessionId,
+                    forkHistory,
                     effort,
-                    permissionMode,
-                    forkSessionId
+                    permissionMode
                 }
             )
             if (result && typeof result === 'object') {
