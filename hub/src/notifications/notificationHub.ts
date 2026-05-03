@@ -10,7 +10,7 @@ export class NotificationHub {
     private readonly lastKnownRequests: Map<string, Set<string>> = new Map()
     private readonly notificationDebounce: Map<string, NodeJS.Timeout> = new Map()
     private readonly lastReadyNotificationAt: Map<string, number> = new Map()
-    private readonly suppressNextReadyNotification: Set<string> = new Set()
+    private readonly suppressReadyUntil: Map<string, number> = new Map()
     private unsubscribeSyncEvents: (() => void) | null = null
 
     constructor(
@@ -38,6 +38,7 @@ export class NotificationHub {
         this.notificationDebounce.clear()
         this.lastKnownRequests.clear()
         this.lastReadyNotificationAt.clear()
+        this.suppressReadyUntil.clear()
     }
 
     private handleSyncEvent(event: SyncEvent): void {
@@ -57,7 +58,7 @@ export class NotificationHub {
         }
 
         if (event.type === 'session-forked') {
-            this.suppressNextReadyNotification.add(event.sessionId)
+            this.suppressReadyUntil.set(event.sessionId, Date.now() + this.readyCooldownMs)
             return
         }
 
@@ -95,7 +96,7 @@ export class NotificationHub {
         }
         this.lastKnownRequests.delete(sessionId)
         this.lastReadyNotificationAt.delete(sessionId)
-        this.suppressNextReadyNotification.delete(sessionId)
+        this.suppressReadyUntil.delete(sessionId)
     }
 
     private getNotifiableSession(sessionId: string): Session | null {
@@ -160,11 +161,15 @@ export class NotificationHub {
             return
         }
 
-        if (this.suppressNextReadyNotification.delete(sessionId)) {
+        const now = Date.now()
+        const suppressUntil = this.suppressReadyUntil.get(sessionId) ?? 0
+        if (now < suppressUntil) {
             return
         }
+        if (suppressUntil > 0) {
+            this.suppressReadyUntil.delete(sessionId)
+        }
 
-        const now = Date.now()
         const last = this.lastReadyNotificationAt.get(sessionId) ?? 0
         if (now - last < this.readyCooldownMs) {
             return
