@@ -224,6 +224,61 @@ describe('NotificationHub', () => {
         hub.stop()
     })
 
+    it('suppresses fork bootstrap ready when ready arrives before session-forked', async () => {
+        const engine = new FakeSyncEngine()
+        const channel = new StubChannel()
+        const hub = new NotificationHub(engine as unknown as SyncEngine, [channel], {
+            permissionDebounceMs: 1,
+            readyCooldownMs: 20
+        })
+
+        const sourceSession = createSession({
+            id: 'source-session',
+            metadata: { path: '/repo', host: 'dev-host', machineId: 'machine-1', flavor: 'codex' }
+        })
+        const forkedSession = createSession({
+            id: 'forked-session',
+            metadata: { path: '/repo', host: 'dev-host', machineId: 'machine-1', flavor: 'codex' }
+        })
+        engine.setSession(sourceSession)
+        engine.setSession(forkedSession)
+
+        const readyEvent: SyncEvent = {
+            type: 'message-received',
+            sessionId: forkedSession.id,
+            message: {
+                id: 'message-1',
+                seq: 1,
+                localId: null,
+                createdAt: 0,
+                content: {
+                    role: 'agent',
+                    content: {
+                        id: 'event-1',
+                        type: 'event',
+                        data: { type: 'ready' }
+                    }
+                }
+            }
+        }
+
+        engine.emit({
+            type: 'session-fork-started',
+            sessionId: sourceSession.id,
+            path: '/repo',
+            targetMachineId: 'machine-1'
+        })
+        engine.emit(readyEvent)
+        await sleep(5)
+        expect(channel.readySessions).toHaveLength(0)
+
+        engine.emit(readyEvent)
+        await sleep(5)
+        expect(channel.readySessions).toHaveLength(1)
+
+        hub.stop()
+    })
+
     it('sends task notifications for task_notification system messages', async () => {
         const engine = new FakeSyncEngine()
         const channel = new StubChannel()

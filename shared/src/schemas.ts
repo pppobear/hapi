@@ -223,6 +223,11 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
         reason: z.enum(['completed', 'terminated', 'error']).optional()
     }),
     SessionChangedSchema.extend({
+        type: z.literal('session-fork-started'),
+        path: z.string(),
+        targetMachineId: z.string()
+    }),
+    SessionChangedSchema.extend({
         type: z.literal('session-forked'),
         sourceSessionId: z.string()
     }),

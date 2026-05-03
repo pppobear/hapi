@@ -625,6 +625,14 @@ export class SyncEngine {
             return { type: 'error', message: 'No machine online', code: 'no_machine_online' }
         }
 
+        this.eventPublisher.emit({
+            type: 'session-fork-started',
+            sessionId,
+            namespace,
+            path: metadata.path,
+            targetMachineId: targetMachine.id
+        })
+
         const spawnResult = await this.rpcGateway.spawnSession(
             targetMachine.id,
             metadata.path,

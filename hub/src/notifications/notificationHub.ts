@@ -3,6 +3,14 @@ import type { SessionEndReason } from '@hapi/protocol'
 import type { NotificationChannel, NotificationHubOptions, TaskNotification } from './notificationTypes'
 import { extractMessageEventType, extractTaskNotification } from './eventParsing'
 
+type PendingForkReadySuppression = {
+    sourceSessionId: string
+    namespace?: string
+    path: string
+    targetMachineId: string
+    expiresAt: number
+}
+
 export class NotificationHub {
     private readonly channels: NotificationChannel[]
     private readonly readyCooldownMs: number
@@ -12,6 +20,7 @@ export class NotificationHub {
     private readonly lastReadyNotificationAt: Map<string, number> = new Map()
     private readonly suppressReadyUntil: Map<string, number> = new Map()
     private readonly forkedBootstrapReadySessions: Set<string> = new Set()
+    private readonly pendingForkReadySuppressions: PendingForkReadySuppression[] = []
     private unsubscribeSyncEvents: (() => void) | null = null
 
     constructor(
@@ -41,6 +50,7 @@ export class NotificationHub {
         this.lastReadyNotificationAt.clear()
         this.suppressReadyUntil.clear()
         this.forkedBootstrapReadySessions.clear()
+        this.pendingForkReadySuppressions.length = 0
     }
 
     private handleSyncEvent(event: SyncEvent): void {
@@ -56,6 +66,17 @@ export class NotificationHub {
 
         if (event.type === 'session-removed' && event.sessionId) {
             this.clearSessionState(event.sessionId)
+            return
+        }
+
+        if (event.type === 'session-fork-started') {
+            this.pendingForkReadySuppressions.push({
+                sourceSessionId: event.sessionId,
+                namespace: event.namespace,
+                path: event.path,
+                targetMachineId: event.targetMachineId,
+                expiresAt: Date.now() + Math.max(this.readyCooldownMs, 30_000)
+            })
             return
         }
 
@@ -107,8 +128,14 @@ export class NotificationHub {
     }
 
     private shouldSuppressForkedBootstrapReady(sessionId: string): boolean {
+        this.removeExpiredPendingForkReadySuppressions()
+
         const suppressUntil = this.suppressReadyUntil.get(sessionId) ?? 0
         if (Date.now() < suppressUntil) {
+            return true
+        }
+
+        if (this.consumePendingForkReadySuppression(sessionId)) {
             return true
         }
 
@@ -119,6 +146,45 @@ export class NotificationHub {
         this.forkedBootstrapReadySessions.delete(sessionId)
         this.suppressReadyUntil.delete(sessionId)
         return true
+    }
+
+    private consumePendingForkReadySuppression(sessionId: string): boolean {
+        const session = this.syncEngine.getSession(sessionId)
+        if (!session) {
+            return false
+        }
+
+        const metadata = session.metadata
+        if (!metadata || typeof metadata.path !== 'string') {
+            return false
+        }
+
+        const index = this.pendingForkReadySuppressions.findIndex((pending) => {
+            if (pending.sourceSessionId === sessionId) {
+                return false
+            }
+            if (pending.namespace && pending.namespace !== session.namespace) {
+                return false
+            }
+            return pending.path === metadata.path && pending.targetMachineId === metadata.machineId
+        })
+
+        if (index === -1) {
+            return false
+        }
+
+        this.pendingForkReadySuppressions.splice(index, 1)
+        return true
+    }
+
+    private removeExpiredPendingForkReadySuppressions(): void {
+        const now = Date.now()
+        for (let i = this.pendingForkReadySuppressions.length - 1; i >= 0; i--) {
+            const pending = this.pendingForkReadySuppressions[i]
+            if (pending && pending.expiresAt <= now) {
+                this.pendingForkReadySuppressions.splice(i, 1)
+            }
+        }
     }
 
     private getNotifiableSession(sessionId: string): Session | null {
