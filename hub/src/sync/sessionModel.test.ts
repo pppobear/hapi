@@ -957,7 +957,7 @@ describe('session model', () => {
         }
     })
 
-    it('passes raw history instead of latest fork token for historical codex fork', async () => {
+    it('passes raw history through the selected user reply for historical codex fork', async () => {
         const store = new Store(':memory:')
         const engine = new SyncEngine(
             store,
@@ -991,6 +991,7 @@ describe('session model', () => {
             store.messages.addMessage(session.id, { role: 'user', content: { type: 'text', text: 'first' } })
             store.messages.addMessage(session.id, { role: 'assistant', content: { type: 'text', text: 'answer' } })
             store.messages.addMessage(session.id, { role: 'user', content: { type: 'text', text: 'second' } })
+            store.messages.addMessage(session.id, { role: 'assistant', content: { type: 'text', text: 'second answer' } })
             store.codexHistory.addItem({
                 sessionId: session.id,
                 codexThreadId: 'codex-thread-1',
@@ -1013,6 +1014,13 @@ describe('session model', () => {
                 itemKind: 'user',
                 messageSeq: 3,
                 rawItem: { id: 'user-3', role: 'user' }
+            })
+            store.codexHistory.addItem({
+                sessionId: session.id,
+                codexThreadId: 'codex-thread-1',
+                itemId: 'assistant-3',
+                itemKind: 'assistant',
+                rawItem: { id: 'assistant-3', role: 'assistant' }
             })
 
             let capturedForkSessionId: string | undefined
@@ -1052,7 +1060,7 @@ describe('session model', () => {
             }
             ;(engine as any).waitForSessionActive = async () => true
 
-            const result = await engine.forkSession(session.id, 'default', { beforeSeq: 3 })
+            const result = await engine.forkSession(session.id, 'default', { beforeSeq: 2 })
 
             expect(result).toEqual({ type: 'success', sessionId: forkedSessionId })
             expect(capturedForkSessionId).toBeUndefined()
@@ -1097,7 +1105,7 @@ describe('session model', () => {
             expect(await engine.forkSession(session.id, 'default', { beforeSeq: 2 })).toMatchObject({
                 type: 'error',
                 code: 'fork_unavailable',
-                message: 'Historical fork cut point must be a user message'
+                message: '历史点 fork 只支持新版本会话'
             })
             expect(await engine.forkSession(session.id, 'default', { beforeSeq: 1 })).toMatchObject({
                 type: 'error',
