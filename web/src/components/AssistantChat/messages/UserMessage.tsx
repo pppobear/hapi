@@ -122,7 +122,7 @@ export function HappyUserMessage() {
                         {hasText && <LazyRainbowText text={text} />}
                         {hasAttachments && <MessageAttachments attachments={attachments} />}
                     </div>
-                    {(hasText || status) && (
+                    {(hasText || status || canForkBefore) && (
                         <div className="shrink-0 self-end pb-0.5 flex items-center gap-1">
                             {hasText && (
                                 <button
