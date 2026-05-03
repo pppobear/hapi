@@ -497,7 +497,7 @@ export function SessionChat(props: {
                         disabled={sessionInactive}
                         onRefresh={props.onRefresh}
                         onRetryMessage={props.onRetryMessage}
-                        onForkBeforeMessage={handleForkBeforeMessage}
+                        onForkBeforeMessage={agentFlavor === 'codex' ? handleForkBeforeMessage : undefined}
                         onFlushPending={props.onFlushPending}
                         onAtBottomChange={props.onAtBottomChange}
                         isLoadingMessages={props.isLoadingMessages}
