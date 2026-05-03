@@ -12,8 +12,12 @@ on:
             - 'package.json'
             - 'bun.lock'
             - '.github/workflows/deploy-hub.yml'
+            - 'scripts/build-and-deploy-hapi-workspace.sh'
             - 'scripts/deploy-hapi-release.sh'
+            - 'scripts/download-tunwg-binaries.sh'
             - 'scripts/install-hapi-user-services.sh'
+            - 'scripts/resolve-hapi-deploy-config.sh'
+            - 'scripts/sync-hapi-source-to-remote.sh'
             - 'docs/fork-deploy.md'
     workflow_dispatch:
         inputs:
@@ -51,38 +55,12 @@ jobs:
               with:
                   ref: ${{ github.event.inputs.git_ref || github.ref }}
 
-            - name: Validate deploy configuration
+            - name: Resolve deploy configuration
               env:
                   DEPLOY_SSH_KEY: ${{ secrets.HAPI_DEPLOY_SSH_KEY }}
                   TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
                   TS_AUDIENCE: ${{ secrets.TS_AUDIENCE }}
-              run: |
-                  set -euo pipefail
-
-                  : "${DEPLOY_SSH_KEY:?Missing secret HAPI_DEPLOY_SSH_KEY}"
-                  : "${TS_OAUTH_CLIENT_ID:?Missing secret TS_OAUTH_CLIENT_ID}"
-                  : "${TS_AUDIENCE:?Missing secret TS_AUDIENCE}"
-                  : "${HAPI_DEPLOY_HOST:?Missing repository variable HAPI_DEPLOY_HOST}"
-
-                  if [[ -z "${HAPI_DEPLOY_USER:-}" ]]; then
-                      HAPI_DEPLOY_USER="enoch"
-                  fi
-                  if [[ -z "${HAPI_DEPLOY_KEEP_RELEASES:-}" ]]; then
-                      HAPI_DEPLOY_KEEP_RELEASES="5"
-                  fi
-                  if [[ -z "${HAPI_DEPLOY_ROOT:-}" ]]; then
-                      HAPI_DEPLOY_ROOT="/home/${HAPI_DEPLOY_USER}/.local/share/hapi-deploy"
-                  fi
-                  if [[ -z "${HAPI_DEPLOY_REPO_PATH:-}" ]]; then
-                      HAPI_DEPLOY_REPO_PATH="/home/${HAPI_DEPLOY_USER}/projects/hapi"
-                  fi
-
-                  {
-                      echo "HAPI_DEPLOY_USER=$HAPI_DEPLOY_USER"
-                      echo "HAPI_DEPLOY_KEEP_RELEASES=$HAPI_DEPLOY_KEEP_RELEASES"
-                      echo "HAPI_DEPLOY_ROOT=$HAPI_DEPLOY_ROOT"
-                      echo "HAPI_DEPLOY_REPO_PATH=$HAPI_DEPLOY_REPO_PATH"
-                  } >> "$GITHUB_ENV"
+              run: bash scripts/resolve-hapi-deploy-config.sh
 
             - name: Connect to Tailscale
               uses: tailscale/github-action@v4
@@ -100,107 +78,27 @@ jobs:
                   chmod 600 ~/.ssh/id_ed25519
                   ssh-keyscan -H "$HAPI_DEPLOY_HOST" >> ~/.ssh/known_hosts
 
-            - name: Set deploy target
-              run: |
-                  set -euo pipefail
-
-                  deploy_target="${HAPI_DEPLOY_USER}@${HAPI_DEPLOY_HOST}"
-                  echo "DEPLOY_TARGET=$deploy_target" >> "$GITHUB_ENV"
-
             - name: Download tunwg binaries
-              run: |
-                  set -euo pipefail
-                  mkdir -p /tmp/tunwg
-                  curl -fsSL -o /tmp/tunwg/tunwg-x64-linux \
-                      "https://github.com/tiann/tunwg/releases/latest/download/tunwg"
-                  curl -fsSL -o /tmp/tunwg/tunwg-arm64-linux \
-                      "https://github.com/tiann/tunwg/releases/latest/download/tunwg-arm64"
-                  curl -fsSL -o /tmp/tunwg/tunwg-x64-darwin \
-                      "https://github.com/tiann/tunwg/releases/latest/download/tunwg-darwin"
-                  curl -fsSL -o /tmp/tunwg/tunwg-arm64-darwin \
-                      "https://github.com/tiann/tunwg/releases/latest/download/tunwg-darwin-arm64"
-                  curl -fsSL -o /tmp/tunwg/tunwg-x64-win32.exe \
-                      "https://github.com/tiann/tunwg/releases/latest/download/tunwg.exe"
-                  curl -fsSL -o /tmp/tunwg/LICENSE \
-                      "https://raw.githubusercontent.com/tiann/tunwg/refs/heads/master/LICENSE"
+              run: bash scripts/download-tunwg-binaries.sh /tmp/tunwg
 
             - name: Sync source to remote
-              run: |
-                  set -euo pipefail
-
-                  source_path="${HAPI_DEPLOY_ROOT}/workspace"
-                  echo "HAPI_DEPLOY_SOURCE_PATH=$source_path" >> "$GITHUB_ENV"
-
-                  ssh "$DEPLOY_TARGET" "install -d '${source_path}' '${source_path}/hub/tools/tunwg'"
-
-                  rsync -az --delete \
-                      --exclude='.git/' \
-                      --exclude='.github/' \
-                      --exclude='node_modules/' \
-                      --exclude='*/node_modules/' \
-                      --exclude='cli/dist-exe/' \
-                      --exclude='hub/dist/' \
-                      --exclude='web/dist/' \
-                      ./ "$DEPLOY_TARGET:${source_path}/"
-
-                  # Upload tunwg binaries (remote cannot reach github.com)
-                  scp /tmp/tunwg/* "$DEPLOY_TARGET:${source_path}/hub/tools/tunwg/"
-                  ssh "$DEPLOY_TARGET" "chmod 755 ${source_path}/hub/tools/tunwg/tunwg-*"
+              run: bash scripts/sync-hapi-source-to-remote.sh
 
             - name: Build and activate on remote
+              env:
+                  RESTART_RUNNER_INPUT: ${{ inputs.restart_runner }}
               run: |
                   set -euo pipefail
 
-                  restart_runner="${{ github.event.inputs.restart_runner }}"
-                  if [[ -z "$restart_runner" ]]; then
+                  restart_runner="${RESTART_RUNNER_INPUT:-true}"
+                  if [[ "$GITHUB_EVENT_NAME" != "workflow_dispatch" || -z "$restart_runner" ]]; then
                       restart_runner="true"
                   fi
 
-                  # Build and deploy
                   ssh "$DEPLOY_TARGET" \
                       "HAPI_DEPLOY_ROOT='${HAPI_DEPLOY_ROOT}' \
                       HAPI_DEPLOY_KEEP_RELEASES='${HAPI_DEPLOY_KEEP_RELEASES}' \
                       HAPI_DEPLOY_RESTART_RUNNER='${restart_runner}' \
                       HAPI_DEPLOY_SOURCE_PATH='${HAPI_DEPLOY_SOURCE_PATH}' \
                       GITHUB_SHA='${GITHUB_SHA}' \
-                      bash -s" <<'EOF'
-                  set -euo pipefail
-
-                  export PATH="$HOME/.bun/bin:$HOME/.npm-global/bin:/usr/local/bin:/usr/bin:$PATH"
-
-                  source_path="${HAPI_DEPLOY_SOURCE_PATH:-${HAPI_DEPLOY_ROOT}/workspace}"
-                  deps_fingerprint_path="${source_path}/.deploy-deps.sha256"
-
-                  cd "$source_path"
-
-                  current_deps_fingerprint="$(
-                      sha256sum \
-                          package.json \
-                          bun.lock \
-                          cli/package.json \
-                          hub/package.json \
-                          shared/package.json \
-                          web/package.json \
-                          website/package.json \
-                          docs/package.json | sha256sum | awk '{print $1}'
-                  )"
-                  previous_deps_fingerprint="$(cat "$deps_fingerprint_path" 2>/dev/null || true)"
-
-                  if [[ ! -d node_modules || "$current_deps_fingerprint" != "$previous_deps_fingerprint" ]]; then
-                      echo "Dependency fingerprint changed; running bun install"
-                      bun install
-                      printf '%s\n' "$current_deps_fingerprint" > "$deps_fingerprint_path"
-                  else
-                      echo "Dependency fingerprint unchanged; skipping bun install"
-                  fi
-
-                  bun run build:single-exe
-
-                  binary_path="$source_path/cli/dist-exe/bun-linux-x64-baseline/hapi"
-                  test -x "$binary_path"
-
-                  HAPI_DEPLOY_ROOT="$HAPI_DEPLOY_ROOT" \
-                  HAPI_DEPLOY_KEEP_RELEASES="$HAPI_DEPLOY_KEEP_RELEASES" \
-                  HAPI_DEPLOY_RESTART_RUNNER="$HAPI_DEPLOY_RESTART_RUNNER" \
-                      bash scripts/deploy-hapi-release.sh "$GITHUB_SHA" "$binary_path"
-                  EOF
+                      bash -s" < scripts/build-and-deploy-hapi-workspace.sh

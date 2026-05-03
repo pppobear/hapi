@@ -69,7 +69,7 @@ systemctl --user start hapi-runner
 
 1. checkout `deploy-infra` 分支
 2. 通过 Tailscale 连到目标机器
-3. CI 通过 `rsync` 把源码同步到远端常驻 workspace（不再走 `git push` / `git worktree`）
+3. CI 通过 `rsync` 把构建所需源码同步到远端常驻 workspace（不再走 `git push` / `git worktree`）
 4. CI 把 `tunwg` 二进制同步到远端 workspace
 5. 远端按依赖指纹决定是否执行 `bun install`
 6. 远端 `bun run build:single-exe`
@@ -87,4 +87,5 @@ systemctl --user start hapi-runner
 
 - 不再把 commit pack 推到远端仓库，避免 `git push` 成为主要耗时
 - 保留远端 workspace 和 `node_modules`，依赖未变化时跳过 `bun install`
-- `rsync --delete` 只同步构建所需源码，跳过 `.git`、`docs`、`website` 和各类构建输出
+- `rsync --delete` 只同步构建所需源码，跳过 `.git`、`node_modules`、构建输出、`hub/tools`、`cli/tools/unpacked`
+- `cli/tools/archives` 只同步远端 Linux x64 构建需要的 ripgrep/difftastic archive
