@@ -78,6 +78,7 @@ export function reduceTimeline(
             blocks.push({
                 kind: 'user-text',
                 id: msg.id,
+                seq: msg.seq,
                 localId: msg.localId,
                 createdAt: msg.createdAt,
                 text: msg.content.text,

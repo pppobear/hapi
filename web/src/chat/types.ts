@@ -80,6 +80,7 @@ export type NormalizedMessage = ({
     content: AgentEvent
 }) & {
     id: string
+    seq?: number | null
     localId: string | null
     createdAt: number
     isSidechain: boolean
@@ -118,6 +119,7 @@ export type ChatToolCall = {
 export type UserTextBlock = {
     kind: 'user-text'
     id: string
+    seq?: number | null
     localId: string | null
     createdAt: number
     text: string

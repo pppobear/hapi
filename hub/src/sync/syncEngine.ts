@@ -8,6 +8,7 @@
  */
 
 import type { CodexCollaborationMode, DecryptedMessage, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
+import { unwrapRoleWrappedRecordEnvelope } from '@hapi/protocol/messages'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
 import type { RpcRegistry } from '../socket/rpcRegistry'
@@ -406,7 +407,8 @@ export class SyncEngine {
         resumeSessionId?: string,
         forkSessionId?: string,
         effort?: string,
-        permissionMode?: PermissionMode
+        permissionMode?: PermissionMode,
+        forkHistory?: unknown[]
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         return await this.rpcGateway.spawnSession(
             machineId,
@@ -420,7 +422,8 @@ export class SyncEngine {
             resumeSessionId,
             forkSessionId,
             effort,
-            permissionMode
+            permissionMode,
+            forkHistory
         )
     }
 
@@ -545,7 +548,7 @@ export class SyncEngine {
         }
     }
 
-    async forkSession(sessionId: string, namespace: string): Promise<ForkSessionResult> {
+    async forkSession(sessionId: string, namespace: string, opts?: { beforeSeq?: number }): Promise<ForkSessionResult> {
         const access = this.sessionCache.resolveSessionAccess(sessionId, namespace)
         if (!access.ok) {
             return {
@@ -568,6 +571,29 @@ export class SyncEngine {
         const forkToken = metadata.codexSessionId
         if (!forkToken) {
             return { type: 'error', message: 'Fork session ID unavailable', code: 'fork_unavailable' }
+        }
+
+        let forkHistory: unknown[] | undefined
+        let cloneBeforeSeq: number | undefined
+        if (opts?.beforeSeq !== undefined) {
+            if (!Number.isInteger(opts.beforeSeq) || opts.beforeSeq <= 0) {
+                return { type: 'error', message: 'beforeSeq must be a positive integer', code: 'fork_unavailable' }
+            }
+            const cutMessage = this.store.messages.getMessageBySeq(sessionId, opts.beforeSeq)
+            const record = cutMessage ? unwrapRoleWrappedRecordEnvelope(cutMessage.content) : null
+            if (!cutMessage || record?.role !== 'user') {
+                return { type: 'error', message: 'Historical fork cut point must be a user message', code: 'fork_unavailable' }
+            }
+            const prefix = this.store.codexHistory.getPrefixBeforeMessageSeq(sessionId, opts.beforeSeq)
+            if (!prefix) {
+                return {
+                    type: 'error',
+                    message: '历史点 fork 只支持新版本会话',
+                    code: 'fork_unavailable'
+                }
+            }
+            forkHistory = prefix
+            cloneBeforeSeq = opts.beforeSeq
         }
 
         const onlineMachines = this.machineCache.getOnlineMachinesByNamespace(namespace)
@@ -601,9 +627,10 @@ export class SyncEngine {
             undefined,
             undefined,
             undefined,
-            forkToken,
+            forkHistory ? undefined : forkToken,
             session.effort ?? undefined,
-            session.permissionMode ?? undefined
+            session.permissionMode ?? undefined,
+            forkHistory
         )
 
         if (spawnResult.type !== 'success') {
@@ -615,7 +642,7 @@ export class SyncEngine {
             return { type: 'error', message: 'Session failed to become active', code: 'fork_failed' }
         }
 
-        this.store.messages.cloneSessionMessages(sessionId, spawnResult.sessionId)
+        this.store.messages.cloneSessionMessages(sessionId, spawnResult.sessionId, cloneBeforeSeq)
         await this.sessionCache.inheritSessionMetadata(sessionId, spawnResult.sessionId)
 
         return { type: 'success', sessionId: spawnResult.sessionId }

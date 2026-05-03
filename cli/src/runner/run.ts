@@ -378,7 +378,17 @@ export async function startRunner(options: { workspaceRoot?: string } = {}): Pro
           };
         }
 
+        let forkHistoryFile: string | null = null;
+        if (agent === 'codex' && Array.isArray(options.forkHistory)) {
+          const forkHistoryDir = await fs.mkdtemp(join(os.tmpdir(), 'hapi-codex-history-'));
+          forkHistoryFile = join(forkHistoryDir, 'history.json');
+          await fs.writeFile(forkHistoryFile, JSON.stringify(options.forkHistory));
+        }
+
         const args = buildCliArgs(agent, options, yolo);
+        if (forkHistoryFile) {
+          args.push('--fork-history-file', forkHistoryFile);
+        }
 
         // sessionId reserved for future use
         const MAX_TAIL_CHARS = 4000;

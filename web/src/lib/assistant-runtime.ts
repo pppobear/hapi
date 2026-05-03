@@ -10,6 +10,7 @@ import type { AttachmentMetadata, MessageStatus as HappyMessageStatus, Session }
 export type HappyChatMessageMetadata = {
     kind: 'user' | 'assistant' | 'tool' | 'event' | 'cli-output'
     status?: HappyMessageStatus
+    seq?: number | null
     localId?: string | null
     originalText?: string
     toolCallId?: string
@@ -30,6 +31,7 @@ function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
                 custom: {
                     kind: 'user',
                     status: block.status,
+                    seq: block.seq,
                     localId: block.localId,
                     originalText: block.originalText,
                     attachments: block.attachments
