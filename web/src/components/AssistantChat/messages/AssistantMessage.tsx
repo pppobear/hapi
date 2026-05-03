@@ -155,7 +155,7 @@ export function HappyAssistantMessage() {
                     )}
                 </div>
                 {(copyText || canFork) ? (
-                    <div className="happy-message-actions-first-line hidden sm:flex shrink-0 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                    <div className="happy-message-actions-first-line flex shrink-0 opacity-70 group-hover/msg:opacity-100 transition-opacity">
                         {copyText ? (
                             <button
                                 type="button"
