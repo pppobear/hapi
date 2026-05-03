@@ -4,6 +4,8 @@ import { killProcessByChildProcess } from '@/utils/process';
 import type {
     InitializeParams,
     InitializeResponse,
+    ModelListParams,
+    ModelListResponse,
     ThreadStartParams,
     ThreadStartResponse,
     ThreadResumeParams,
@@ -13,7 +15,9 @@ import type {
     TurnStartParams,
     TurnStartResponse,
     TurnInterruptParams,
-    TurnInterruptResponse
+    TurnInterruptResponse,
+    ThreadCompactStartParams,
+    ThreadCompactStartResponse
 } from './appServerTypes';
 
 type JsonRpcLiteRequest = {
@@ -135,6 +139,13 @@ export class CodexAppServerClient {
         return response as InitializeResponse;
     }
 
+    async listModels(params?: ModelListParams): Promise<ModelListResponse> {
+        const response = await this.sendRequest('model/list', params ?? {}, {
+            timeoutMs: 30_000
+        });
+        return response as ModelListResponse;
+    }
+
     async startThread(params: ThreadStartParams, options?: { signal?: AbortSignal }): Promise<ThreadStartResponse> {
         const response = await this.sendRequest('thread/start', params, {
             signal: options?.signal,
@@ -172,6 +183,17 @@ export class CodexAppServerClient {
             timeoutMs: 30_000
         });
         return response as TurnInterruptResponse;
+    }
+
+    async compactThread(
+        params: ThreadCompactStartParams,
+        options?: { signal?: AbortSignal }
+    ): Promise<ThreadCompactStartResponse> {
+        const response = await this.sendRequest('thread/compact/start', params, {
+            signal: options?.signal,
+            timeoutMs: CodexAppServerClient.DEFAULT_TIMEOUT_MS
+        });
+        return response as ThreadCompactStartResponse;
     }
 
     async disconnect(): Promise<void> {

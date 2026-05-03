@@ -173,6 +173,11 @@ export function buildTurnStartParams(args: {
         params.sandboxPolicy = sandboxPolicy;
     }
 
+    if (args.mode?.modelReasoningEffort) {
+        params.effort = args.mode.modelReasoningEffort;
+        params.summary = 'detailed';
+    }
+
     const collaborationMode = args.mode?.collaborationMode;
     const model = args.overrides?.model ?? args.mode?.model;
     if (collaborationMode) {

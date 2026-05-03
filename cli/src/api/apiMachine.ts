@@ -3,7 +3,9 @@
  */
 
 import { io, type Socket } from 'socket.io-client'
-import { stat } from 'node:fs/promises'
+import { readdir, realpath, stat } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { logger } from '@/ui/logger'
 import { configuration } from '@/configuration'
 import type { Update, UpdateMachineBody } from '@hapi/protocol'
@@ -15,6 +17,7 @@ import { RpcHandlerManager } from './rpc/RpcHandlerManager'
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers'
 import type { SpawnSessionOptions, SpawnSessionResult } from '../modules/common/rpcTypes'
 import { applyVersionedAck } from './versionedUpdate'
+import { buildSocketIoExtraHeaderOptions } from './hubExtraHeaders'
 
 interface ServerToRunnerEvents {
     update: (data: Update) => void
@@ -64,15 +67,50 @@ interface PathExistsResponse {
     exists: Record<string, boolean>
 }
 
+interface ListMachineDirectoryRequest {
+    path: string
+}
+
+interface ListMachineDirectoryEntry {
+    name: string
+    type: 'file' | 'directory' | 'other'
+    size?: number
+    modified?: number
+    isGitRepo?: boolean
+}
+
+interface ListMachineDirectoryResponse {
+    success: boolean
+    entries?: ListMachineDirectoryEntry[]
+    error?: string
+}
+
 export class ApiMachineClient {
     private socket!: Socket<ServerToRunnerEvents, RunnerToServerEvents>
     private keepAliveInterval: NodeJS.Timeout | null = null
     private rpcHandlerManager: RpcHandlerManager
 
+    private readonly normalizedWorkspaceRoot: string | undefined
+
     constructor(
         private readonly token: string,
-        private readonly machine: Machine
+        private readonly machine: Machine,
+        private readonly workspaceRoot?: string
     ) {
+        // realpath the root once so all subsequent comparisons are against
+        // the canonical, symlink-resolved path. Falls back to a lexical
+        // resolve if realpath fails (e.g. unusual permission setup) so we
+        // still get *some* protection rather than skipping the check.
+        if (workspaceRoot) {
+            try {
+                this.normalizedWorkspaceRoot = realpathSync(workspaceRoot)
+            } catch {
+                this.normalizedWorkspaceRoot = resolvePath(workspaceRoot)
+            }
+        } else {
+            this.normalizedWorkspaceRoot = undefined
+        }
+
         this.rpcHandlerManager = new RpcHandlerManager({
             scopePrefix: this.machine.id,
             logger: (msg, data) => logger.debug(msg, data)
@@ -98,14 +136,126 @@ export class ApiMachineClient {
 
             return { exists }
         })
+
+        this.rpcHandlerManager.registerHandler<ListMachineDirectoryRequest, ListMachineDirectoryResponse>('list-directory', async (params) => {
+            if (!this.normalizedWorkspaceRoot) {
+                return { success: false, error: 'Workspace browsing is not enabled for this machine' }
+            }
+
+            const rawPath = typeof params?.path === 'string' ? params.path.trim() : ''
+            if (!rawPath) {
+                return { success: false, error: 'Path is required' }
+            }
+
+            const targetPath = await this.resolveForWorkspaceCheck(rawPath)
+            if (!this.isWithinWorkspaceRoot(targetPath)) {
+                return { success: false, error: 'Path is outside workspace root' }
+            }
+
+            try {
+                const dirStat = await stat(targetPath)
+                if (!dirStat.isDirectory()) {
+                    return { success: false, error: 'Path is not a directory' }
+                }
+
+                const dirEntries = await readdir(targetPath, { withFileTypes: true })
+                const entries: ListMachineDirectoryEntry[] = []
+
+                await Promise.all(dirEntries.map(async (entry) => {
+                    if (entry.name.startsWith('.')) return
+
+                    const fullPath = join(targetPath, entry.name)
+                    let type: 'file' | 'directory' | 'other' = 'other'
+                    let size: number | undefined
+                    let modified: number | undefined
+                    let isGitRepo = false
+
+                    if (entry.isDirectory()) {
+                        type = 'directory'
+                        try {
+                            const gitStat = await stat(join(fullPath, '.git'))
+                            isGitRepo = gitStat.isDirectory() || gitStat.isFile()
+                        } catch {
+                            // not a git repo
+                        }
+                    } else if (entry.isFile()) {
+                        type = 'file'
+                    }
+
+                    if (!entry.isSymbolicLink()) {
+                        try {
+                            const stats = await stat(fullPath)
+                            size = stats.size
+                            modified = stats.mtime.getTime()
+                        } catch {
+                            // ignore stat errors
+                        }
+                    }
+
+                    entries.push({ name: entry.name, type, size, modified, isGitRepo })
+                }))
+
+                entries.sort((a, b) => {
+                    if (a.type === 'directory' && b.type !== 'directory') return -1
+                    if (a.type !== 'directory' && b.type === 'directory') return 1
+                    return a.name.localeCompare(b.name)
+                })
+
+                return { success: true, entries }
+            } catch (error) {
+                return { success: false, error: error instanceof Error ? error.message : 'Failed to list directory' }
+            }
+        })
+    }
+
+    private isWithinWorkspaceRoot(absolutePath: string): boolean {
+        if (!this.normalizedWorkspaceRoot) return true
+        const rel = relative(this.normalizedWorkspaceRoot, absolutePath)
+        return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+    }
+
+    /**
+     * Canonicalize a path for workspace-root containment checks. Resolves
+     * symlinks via realpath so a symlink such as `/safe/out -> /etc` cannot
+     * be used to escape the configured root with a lexical-only check.
+     *
+     * If the path doesn't exist (e.g. a session is being spawned in a
+     * directory we'll create), walks up to the nearest existing ancestor
+     * and realpaths *that*, joining the missing tail back on. This way the
+     * check still runs against the real on-disk location once any
+     * intermediate symlink in the parent chain has been resolved.
+     */
+    private async resolveForWorkspaceCheck(path: string): Promise<string> {
+        const absolute = resolvePath(path)
+        try {
+            return await realpath(absolute)
+        } catch {
+            const missing: string[] = []
+            let cursor = absolute
+            while (cursor !== dirname(cursor)) {
+                missing.unshift(basename(cursor))
+                cursor = dirname(cursor)
+                try {
+                    return join(await realpath(cursor), ...missing)
+                } catch {
+                    // keep walking to the nearest existing parent
+                }
+            }
+            return absolute
+        }
     }
 
     setRPCHandlers({ spawnSession, stopSession, requestShutdown }: MachineRpcHandlers): void {
         this.rpcHandlerManager.registerHandler('spawn-happy-session', async (params: any) => {
-            const { directory, sessionId, resumeSessionId, forkSessionId, machineId, approvedNewDirectoryCreation, agent, model, effort, modelReasoningEffort, yolo, token, sessionType, worktreeName } = params || {}
+            const { directory, sessionId, resumeSessionId, forkSessionId, machineId, approvedNewDirectoryCreation, agent, model, effort, modelReasoningEffort, yolo, permissionMode, token, sessionType, worktreeName } = params || {}
 
             if (!directory) {
                 throw new Error('Directory is required')
+            }
+
+            const resolvedDirectory = await this.resolveForWorkspaceCheck(directory)
+            if (!this.isWithinWorkspaceRoot(resolvedDirectory)) {
+                return { type: 'error', errorMessage: 'Directory is outside this machine\'s workspace root' }
             }
 
             const result = await spawnSession({
@@ -120,6 +270,7 @@ export class ApiMachineClient {
                 effort,
                 modelReasoningEffort,
                 yolo,
+                permissionMode,
                 token,
                 sessionType,
                 worktreeName
@@ -232,7 +383,8 @@ export class ApiMachineClient {
             path: '/socket.io/',
             reconnection: true,
             reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000
+            reconnectionDelayMax: 5000,
+            ...buildSocketIoExtraHeaderOptions()
         })
 
         this.socket.on('connect', () => {
@@ -247,6 +399,34 @@ export class ApiMachineClient {
             })).catch((error) => {
                 logger.debug('[API MACHINE] Failed to update runner state on connect', error)
             })
+
+            const hubWorkspaceRoot = this.machine.metadata?.workspaceRoot
+            const desiredWorkspaceRoot = this.workspaceRoot
+            if (desiredWorkspaceRoot !== hubWorkspaceRoot) {
+                if (desiredWorkspaceRoot) {
+                    console.log(`[HAPI] Syncing workspace root to hub: ${desiredWorkspaceRoot} (current hub value: ${hubWorkspaceRoot ?? 'none'})`)
+                } else {
+                    console.log(`[HAPI] Clearing workspace root on hub (was: ${hubWorkspaceRoot})`)
+                }
+                this.updateMachineMetadata((current) => {
+                    const base = current ?? this.machine.metadata
+                    if (!base) {
+                        return { workspaceRoot: desiredWorkspaceRoot } as MachineMetadata
+                    }
+                    if (desiredWorkspaceRoot) {
+                        return { ...base, workspaceRoot: desiredWorkspaceRoot }
+                    }
+                    const { workspaceRoot: _omit, ...rest } = base
+                    return rest as MachineMetadata
+                }).then(() => {
+                    console.log(`[HAPI] Workspace root synced: ${this.machine.metadata?.workspaceRoot ?? '(none)'}`)
+                }).catch((error) => {
+                    console.error('[HAPI] Failed to sync workspace root:', error instanceof Error ? error.message : error)
+                })
+            } else if (desiredWorkspaceRoot) {
+                console.log(`[HAPI] Workspace root already up to date on hub: ${desiredWorkspaceRoot}`)
+            }
+
             this.startKeepAlive()
         })
 

@@ -4,7 +4,7 @@ import { AgentSessionBase } from '@/agent/sessionBase';
 import type { EnhancedMode, PermissionMode } from './loop';
 import type { CodexCliOverrides } from './utils/codexCliOverrides';
 import type { LocalLaunchExitReason } from '@/agent/localLaunchPolicy';
-import type { SessionModel } from '@/api/types';
+import type { Metadata, SessionModel, SessionModelReasoningEffort } from '@/api/types';
 
 type LocalLaunchFailure = {
     message: string;
@@ -12,12 +12,15 @@ type LocalLaunchFailure = {
 };
 
 export class CodexSession extends AgentSessionBase<EnhancedMode> {
+    transcriptPath: string | null = null;
     readonly codexArgs?: string[];
     readonly codexCliOverrides?: CodexCliOverrides;
     readonly forkSessionId?: string;
     readonly startedBy: 'runner' | 'terminal';
     readonly startingMode: 'local' | 'remote';
     localLaunchFailure: LocalLaunchFailure | null = null;
+
+    private transcriptPathCallbacks: Array<(path: string) => void> = [];
 
     constructor(opts: {
         api: ApiClient;
@@ -35,6 +38,7 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
         forkSessionId?: string;
         permissionMode?: PermissionMode;
         model?: SessionModel;
+        modelReasoningEffort?: SessionModelReasoningEffort;
         collaborationMode?: EnhancedMode['collaborationMode'];
     }) {
         super({
@@ -54,6 +58,7 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
             }),
             permissionMode: opts.permissionMode,
             model: opts.model,
+            modelReasoningEffort: opts.modelReasoningEffort,
             collaborationMode: opts.collaborationMode
         });
 
@@ -64,7 +69,43 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
         this.startingMode = opts.startingMode;
         this.permissionMode = opts.permissionMode;
         this.model = opts.model;
+        this.modelReasoningEffort = opts.modelReasoningEffort;
         this.collaborationMode = opts.collaborationMode;
+    }
+
+    onTranscriptPathFound(path: string): void {
+        if (this.transcriptPath === path) {
+            return;
+        }
+        this.transcriptPath = path;
+        for (const callback of this.transcriptPathCallbacks) {
+            callback(path);
+        }
+    }
+
+    addTranscriptPathCallback(cb: (path: string) => void): void {
+        this.transcriptPathCallbacks.push(cb);
+    }
+
+    removeTranscriptPathCallback(cb: (path: string) => void): void {
+        const index = this.transcriptPathCallbacks.indexOf(cb);
+        if (index !== -1) {
+            this.transcriptPathCallbacks.splice(index, 1);
+        }
+    }
+
+    resetTranscriptPath(): void {
+        this.transcriptPath = null;
+    }
+
+    resetCodexThread(): void {
+        this.sessionId = null;
+        this.resetTranscriptPath();
+        this.client.updateMetadata((metadata: Metadata) => {
+            const updated = { ...metadata };
+            delete updated.codexSessionId;
+            return updated;
+        });
     }
 
     setPermissionMode = (mode: PermissionMode): void => {
@@ -73,6 +114,10 @@ export class CodexSession extends AgentSessionBase<EnhancedMode> {
 
     setModel = (model: SessionModel): void => {
         this.model = model;
+    };
+
+    setModelReasoningEffort = (modelReasoningEffort: SessionModelReasoningEffort): void => {
+        this.modelReasoningEffort = modelReasoningEffort;
     };
 
     setCollaborationMode = (mode: EnhancedMode['collaborationMode']): void => {

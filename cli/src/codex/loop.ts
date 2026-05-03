@@ -30,6 +30,7 @@ interface LoopOptions {
     codexCliOverrides?: CodexCliOverrides;
     permissionMode?: PermissionMode;
     model?: string;
+    modelReasoningEffort?: ReasoningEffort;
     collaborationMode?: CodexCollaborationMode;
     resumeSessionId?: string;
     forkSessionId?: string;
@@ -56,6 +57,7 @@ export async function loop(opts: LoopOptions): Promise<void> {
         forkSessionId: opts.forkSessionId,
         permissionMode: opts.permissionMode ?? 'default',
         model: opts.model,
+        modelReasoningEffort: opts.modelReasoningEffort,
         collaborationMode: opts.collaborationMode ?? 'default'
     });
 

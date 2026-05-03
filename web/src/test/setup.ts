@@ -34,7 +34,17 @@ Object.defineProperty(globalThis, 'localStorage', {
     value: localStorageMock
 })
 
+Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: localStorageMock
+})
+
 Object.defineProperty(globalThis, 'sessionStorage', {
+    configurable: true,
+    value: sessionStorageMock
+})
+
+Object.defineProperty(window, 'sessionStorage', {
     configurable: true,
     value: sessionStorageMock
 })
