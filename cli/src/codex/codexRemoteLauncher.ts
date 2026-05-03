@@ -17,6 +17,7 @@ import { registerAppServerPermissionHandlers } from './utils/appServerPermission
 import { buildThreadForkParams, buildThreadStartParams, buildTurnStartParams } from './utils/appServerConfig';
 import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
 import { parseCodexSpecialCommand } from './codexSpecialCommands';
+import type { ResponseItem } from './appServerTypes';
 import {
     RemoteLauncherBase,
     type RemoteLauncherDisplayContext,
@@ -24,7 +25,7 @@ import {
 } from '@/modules/common/remote/RemoteLauncherBase';
 
 type HappyServer = Awaited<ReturnType<typeof buildHapiMcpBridge>>['server'];
-type QueuedMessage = { message: string; mode: EnhancedMode; isolate: boolean; hash: string };
+type QueuedMessage = { message: string; mode: EnhancedMode; isolate: boolean; hash: string; messageSeqs: number[] };
 
 class CodexRemoteLauncher extends RemoteLauncherBase {
     private readonly session: CodexSession;
@@ -139,6 +140,77 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
 
         const asString = (value: unknown): string | null => {
             return typeof value === 'string' && value.length > 0 ? value : null;
+        };
+
+        const extractHistoryItem = (params: unknown): Record<string, unknown> | null => {
+            const record = asRecord(params);
+            if (!record) return null;
+            return asRecord(record.item) ?? record;
+        };
+
+        const extractHistoryItemId = (params: unknown, item: Record<string, unknown>): string | null => {
+            const record = asRecord(params);
+            return asString(record?.itemId ?? record?.item_id ?? record?.id)
+                ?? asString(item.id ?? item.itemId ?? item.item_id);
+        };
+
+        const extractHistoryTurnId = (params: unknown): string | null => {
+            const record = asRecord(params);
+            return asString(record?.turnId ?? record?.turn_id) ?? this.currentTurnId;
+        };
+
+        const classifyHistoryItem = (item: Record<string, unknown>): 'user' | 'assistant' | 'tool' | 'event' | 'unknown' => {
+            if (item.role === 'user') return 'user';
+            if (item.role === 'assistant') return 'assistant';
+            const rawType = asString(item.type)?.toLowerCase() ?? '';
+            if (rawType.includes('tool') || rawType.includes('function') || rawType.includes('command')) return 'tool';
+            if (rawType.includes('message') || rawType.includes('reasoning')) return 'assistant';
+            if (rawType.includes('event')) return 'event';
+            return 'unknown';
+        };
+
+        const recordHistoryItem = (input: {
+            threadId: string;
+            turnId?: string | null;
+            itemId: string;
+            itemKind: 'user' | 'assistant' | 'tool' | 'event' | 'unknown';
+            messageSeq?: number | null;
+            rawItem: ResponseItem;
+        }): void => {
+            const historySender = (session.client as unknown as { sendCodexHistoryItem?: typeof session.client.sendCodexHistoryItem }).sendCodexHistoryItem;
+            if (!historySender) {
+                return;
+            }
+            historySender.call(session.client, {
+                codexThreadId: input.threadId,
+                turnId: input.turnId ?? null,
+                itemId: input.itemId,
+                itemKind: input.itemKind,
+                messageSeq: input.messageSeq ?? null,
+                rawItem: input.rawItem
+            });
+        };
+
+        const buildUserHistoryItem = (itemId: string, message: string): ResponseItem => ({
+            id: itemId,
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: message }]
+        });
+
+        const recordCompletedHistoryItem = (method: string, params: unknown): void => {
+            if (method !== 'item/completed' || !this.currentThreadId) return;
+            const item = extractHistoryItem(params);
+            if (!item) return;
+            const itemId = extractHistoryItemId(params, item);
+            if (!itemId) return;
+            recordHistoryItem({
+                threadId: this.currentThreadId,
+                turnId: extractHistoryTurnId(params),
+                itemId,
+                itemKind: classifyHistoryItem(item),
+                rawItem: item
+            });
         };
 
         const applyResolvedModel = (value: unknown): string | undefined => {
@@ -567,6 +639,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         });
 
         appServerClient.setNotificationHandler((method, params) => {
+            recordCompletedHistoryItem(method, params);
             const events = appServerEventConverter.handleNotification(method, params);
             for (const event of events) {
                 const eventRecord = asRecord(event) ?? { type: undefined };
@@ -629,7 +702,39 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         let hasThread = false;
         let pending: QueuedMessage | null = null;
 
-        if (session.forkSessionId) {
+        if (session.forkHistory) {
+            const threadParams = buildThreadStartParams({
+                cwd: session.path,
+                mode: buildInitialMode(),
+                mcpServers,
+                cliOverrides: session.codexCliOverrides
+            });
+            const historicalThreadId = `hapi-fork-${randomUUID()}`;
+            let resumeResponse: unknown;
+            try {
+                resumeResponse = await appServerClient.resumeThread({
+                    threadId: historicalThreadId,
+                    history: session.forkHistory,
+                    ...threadParams
+                }, {
+                    signal: this.abortController.signal
+                });
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                throw new Error(`Codex historical fork failed: app-server rejected thread/resume(history): ${detail}`);
+            }
+            const resumeRecord = asRecord(resumeResponse);
+            const resumeThread = resumeRecord ? asRecord(resumeRecord.thread) : null;
+            const resumedThreadId = asString(resumeThread?.id);
+            if (!resumedThreadId) {
+                throw new Error('Codex historical fork failed: app-server thread/resume(history) did not return thread.id');
+            }
+            this.currentThreadId = resumedThreadId;
+            session.onSessionFound(resumedThreadId);
+            hasThread = true;
+            applyResolvedModel(resumeRecord?.model);
+            sendReady();
+        } else if (session.forkSessionId) {
             const forkResponse = await appServerClient.forkThread(buildThreadForkParams({
                 threadId: session.forkSessionId,
                 cwd: session.path,
@@ -910,6 +1015,17 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     },
                     cliOverrides: session.codexCliOverrides
                 });
+                const messageSeq = message.messageSeqs.length === 1 ? message.messageSeqs[0] : null;
+                if (typeof messageSeq === 'number' && this.currentThreadId) {
+                    const itemId = `hapi-user-${messageSeq}`;
+                    recordHistoryItem({
+                        threadId: this.currentThreadId,
+                        itemId,
+                        itemKind: 'user',
+                        messageSeq,
+                        rawItem: buildUserHistoryItem(itemId, message.message)
+                    });
+                }
                 turnInFlight = true;
                 allowAnonymousTerminalEvent = false;
                 const turnResponse = await appServerClient.startTurn(turnParams, {

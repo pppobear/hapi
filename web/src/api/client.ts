@@ -296,10 +296,15 @@ export class ApiClient {
         return response.sessionId
     }
 
-    async forkSession(sessionId: string): Promise<string> {
+    async forkSession(sessionId: string, opts?: { beforeSeq?: number }): Promise<string> {
         const response = await this.request<{ sessionId: string }>(
             `/api/sessions/${encodeURIComponent(sessionId)}/fork`,
-            { method: 'POST' }
+            {
+                method: 'POST',
+                ...(opts?.beforeSeq !== undefined && {
+                    body: JSON.stringify({ beforeSeq: opts.beforeSeq })
+                })
+            }
         )
         return response.sessionId
     }

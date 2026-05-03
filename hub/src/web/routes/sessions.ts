@@ -152,8 +152,21 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
             return sessionResult
         }
 
+        let beforeSeq: number | undefined
+        const contentType = c.req.header('content-type') ?? ''
+        if (contentType.includes('application/json')) {
+            const body = await c.req.json().catch(() => null) as { beforeSeq?: unknown } | null
+            if (body && body.beforeSeq !== undefined) {
+                beforeSeq = typeof body.beforeSeq === 'number' ? body.beforeSeq : Number.NaN
+            }
+        }
+
         const namespace = c.get('namespace')
-        const result = await engine.forkSession(sessionResult.sessionId, namespace)
+        const result = await engine.forkSession(
+            sessionResult.sessionId,
+            namespace,
+            beforeSeq !== undefined ? { beforeSeq } : undefined
+        )
         if (result.type === 'error') {
             const status = result.code === 'no_machine_online' ? 503
                 : result.code === 'access_denied' ? 403

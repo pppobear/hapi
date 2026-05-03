@@ -748,6 +748,158 @@ describe('session model', () => {
         }
     })
 
+    it('passes raw history instead of latest fork token for historical codex fork', async () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'session-codex-history-fork',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'codex',
+                    codexSessionId: 'codex-thread-1'
+                },
+                null,
+                'default',
+                'gpt-5.4'
+            )
+            engine.getOrCreateMachine(
+                'machine-1',
+                { host: 'localhost', platform: 'linux', happyCliVersion: '0.1.0' },
+                null,
+                'default'
+            )
+            engine.handleMachineAlive({ machineId: 'machine-1', time: Date.now() })
+
+            store.messages.addMessage(session.id, { role: 'user', content: { type: 'text', text: 'first' } })
+            store.messages.addMessage(session.id, { role: 'assistant', content: { type: 'text', text: 'answer' } })
+            store.messages.addMessage(session.id, { role: 'user', content: { type: 'text', text: 'second' } })
+            store.codexHistory.addItem({
+                sessionId: session.id,
+                codexThreadId: 'codex-thread-1',
+                itemId: 'user-1',
+                itemKind: 'user',
+                messageSeq: 1,
+                rawItem: { id: 'user-1', role: 'user' }
+            })
+            store.codexHistory.addItem({
+                sessionId: session.id,
+                codexThreadId: 'codex-thread-1',
+                itemId: 'assistant-1',
+                itemKind: 'assistant',
+                rawItem: { id: 'assistant-1', role: 'assistant' }
+            })
+            store.codexHistory.addItem({
+                sessionId: session.id,
+                codexThreadId: 'codex-thread-1',
+                itemId: 'user-3',
+                itemKind: 'user',
+                messageSeq: 3,
+                rawItem: { id: 'user-3', role: 'user' }
+            })
+
+            let capturedForkSessionId: string | undefined
+            let capturedForkHistory: unknown[] | undefined
+            let forkedSessionId = ''
+            ;(engine as any).rpcGateway.spawnSession = async (
+                _machineId: string,
+                _directory: string,
+                _agent: string,
+                _model?: string,
+                _modelReasoningEffort?: string,
+                _yolo?: boolean,
+                _sessionType?: 'simple' | 'worktree',
+                _worktreeName?: string,
+                _resumeSessionId?: string,
+                forkSessionId?: string,
+                _effort?: string,
+                _permissionMode?: string,
+                forkHistory?: unknown[]
+            ) => {
+                capturedForkSessionId = forkSessionId
+                capturedForkHistory = forkHistory
+                const forkedSession = engine.getOrCreateSession(
+                    'forked-session-history-point',
+                    {
+                        path: '/tmp/project',
+                        host: 'localhost',
+                        machineId: 'machine-1',
+                        flavor: 'codex',
+                        codexSessionId: 'codex-thread-2'
+                    },
+                    null,
+                    'default'
+                )
+                forkedSessionId = forkedSession.id
+                return { type: 'success', sessionId: forkedSessionId }
+            }
+            ;(engine as any).waitForSessionActive = async () => true
+
+            const result = await engine.forkSession(session.id, 'default', { beforeSeq: 3 })
+
+            expect(result).toEqual({ type: 'success', sessionId: forkedSessionId })
+            expect(capturedForkSessionId).toBeUndefined()
+            expect(capturedForkHistory).toEqual([
+                { id: 'user-1', role: 'user' },
+                { id: 'assistant-1', role: 'assistant' }
+            ])
+            expect(store.messages.getMessages(forkedSessionId, 10).map((message) => message.content)).toEqual([
+                { role: 'user', content: { type: 'text', text: 'first' } },
+                { role: 'assistant', content: { type: 'text', text: 'answer' } }
+            ])
+        } finally {
+            engine.stop()
+        }
+    })
+
+    it('rejects historical fork for non-user cut points or sessions without raw history', async () => {
+        const store = new Store(':memory:')
+        const engine = new SyncEngine(
+            store,
+            {} as never,
+            new RpcRegistry(),
+            { broadcast() {} } as never
+        )
+
+        try {
+            const session = engine.getOrCreateSession(
+                'session-codex-history-fork-unavailable',
+                {
+                    path: '/tmp/project',
+                    host: 'localhost',
+                    machineId: 'machine-1',
+                    flavor: 'codex',
+                    codexSessionId: 'codex-thread-1'
+                },
+                null,
+                'default'
+            )
+            store.messages.addMessage(session.id, { role: 'user', content: { type: 'text', text: 'first' } })
+            store.messages.addMessage(session.id, { role: 'assistant', content: { type: 'text', text: 'answer' } })
+
+            expect(await engine.forkSession(session.id, 'default', { beforeSeq: 2 })).toMatchObject({
+                type: 'error',
+                code: 'fork_unavailable',
+                message: 'Historical fork cut point must be a user message'
+            })
+            expect(await engine.forkSession(session.id, 'default', { beforeSeq: 1 })).toMatchObject({
+                type: 'error',
+                code: 'fork_unavailable',
+                message: '历史点 fork 只支持新版本会话'
+            })
+        } finally {
+            engine.stop()
+        }
+    })
+
     describe('session dedup by agent session ID', () => {
         it('merges duplicate when codexSessionId collides', async () => {
             const store = new Store(':memory:')
