@@ -24,5 +24,5 @@ rsync -az --delete --info=stats2 \
     --exclude='website/dist/' \
     ./ "$DEPLOY_TARGET:${HAPI_DEPLOY_SOURCE_PATH}/"
 
-scp /tmp/tunwg/* "$DEPLOY_TARGET:${HAPI_DEPLOY_SOURCE_PATH}/hub/tools/tunwg/"
+rsync -az --ignore-existing --info=stats2 /tmp/tunwg/ "$DEPLOY_TARGET:${HAPI_DEPLOY_SOURCE_PATH}/hub/tools/tunwg/"
 ssh "$DEPLOY_TARGET" "chmod 755 ${HAPI_DEPLOY_SOURCE_PATH}/hub/tools/tunwg/tunwg-*"
