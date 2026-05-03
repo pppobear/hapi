@@ -270,6 +270,13 @@ export function deleteQueuedMessageById(
     `).run(sessionId, messageId, messageId)
 }
 
+export function getMessageBySeq(db: Database, sessionId: string, seq: number): StoredMessage | null {
+    const row = db.prepare(
+        'SELECT * FROM messages WHERE session_id = ? AND seq = ? LIMIT 1'
+    ).get(sessionId, seq) as DbMessageRow | undefined
+    return row ? toStoredMessage(row) : null
+}
+
 /** Mark messages as invoked at the given server timestamp.
  *  Only updates rows whose local_id is in localIds.
  *  First-write-wins: rows with a non-NULL invoked_at are not updated.  A duplicate
@@ -351,15 +358,20 @@ export function mergeSessionMessages(
 export function cloneSessionMessages(
     db: Database,
     fromSessionId: string,
-    toSessionId: string
+    toSessionId: string,
+    beforeSeq?: number
 ): { cloned: number; sourceMaxSeq: number; targetMaxSeq: number } {
     if (fromSessionId === toSessionId) {
         return { cloned: 0, sourceMaxSeq: 0, targetMaxSeq: getMaxSeq(db, toSessionId) }
     }
 
-    const sourceRows = db.prepare(
-        'SELECT * FROM messages WHERE session_id = ? ORDER BY seq ASC'
-    ).all(fromSessionId) as DbMessageRow[]
+    const sourceRows = beforeSeq === undefined
+        ? db.prepare(
+            'SELECT * FROM messages WHERE session_id = ? ORDER BY seq ASC'
+        ).all(fromSessionId) as DbMessageRow[]
+        : db.prepare(
+            'SELECT * FROM messages WHERE session_id = ? AND seq < ? ORDER BY seq ASC'
+        ).all(fromSessionId, beforeSeq) as DbMessageRow[]
 
     if (sourceRows.length === 0) {
         return { cloned: 0, sourceMaxSeq: 0, targetMaxSeq: getMaxSeq(db, toSessionId) }
@@ -379,9 +391,9 @@ export function cloneSessionMessages(
 
         const insert = db.prepare(`
             INSERT INTO messages (
-                id, session_id, content, created_at, seq, local_id
+                id, session_id, content, created_at, seq, local_id, invoked_at
             ) VALUES (
-                @id, @session_id, @content, @created_at, @seq, @local_id
+                @id, @session_id, @content, @created_at, @seq, @local_id, @invoked_at
             )
         `)
 
@@ -400,7 +412,8 @@ export function cloneSessionMessages(
                 content: row.content,
                 created_at: row.created_at,
                 seq: targetMaxSeq + row.seq,
-                local_id: localId
+                local_id: localId,
+                invoked_at: row.invoked_at
             })
         }
 

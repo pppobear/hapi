@@ -44,6 +44,16 @@ const messageSchema = z.object({
     localId: z.string().optional()
 })
 
+const codexHistoryItemSchema = z.object({
+    sid: z.string(),
+    codexThreadId: z.string(),
+    turnId: z.string().nullable().optional(),
+    itemId: z.string(),
+    itemKind: z.enum(['user', 'assistant', 'tool', 'event', 'unknown']),
+    messageSeq: z.number().int().nullable().optional(),
+    rawItem: z.unknown()
+})
+
 const updateMetadataSchema = z.object({
     sid: z.string(),
     expectedVersion: z.number().int(),
@@ -154,6 +164,30 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
                 createdAt: msg.createdAt,
                 invokedAt: msg.invokedAt
             }
+        })
+    })
+
+    socket.on('codex-history-item', (data: unknown) => {
+        const parsed = codexHistoryItemSchema.safeParse(data)
+        if (!parsed.success) {
+            return
+        }
+
+        const { sid } = parsed.data
+        const sessionAccess = resolveSessionAccess(sid)
+        if (!sessionAccess.ok) {
+            emitAccessError('session', sid, sessionAccess.reason)
+            return
+        }
+
+        store.codexHistory.addItem({
+            sessionId: sid,
+            codexThreadId: parsed.data.codexThreadId,
+            turnId: parsed.data.turnId ?? null,
+            itemId: parsed.data.itemId,
+            itemKind: parsed.data.itemKind,
+            messageSeq: parsed.data.messageSeq ?? null,
+            rawItem: parsed.data.rawItem
         })
     })
 

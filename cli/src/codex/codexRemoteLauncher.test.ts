@@ -8,6 +8,7 @@ const harness = vi.hoisted(() => ({
     initializeCalls: [] as unknown[],
     startThreadIds: [] as string[],
     resumeThreadIds: [] as string[],
+    resumeThreadCalls: [] as unknown[],
     startTurnThreadIds: [] as string[],
     interruptedTurns: [] as Array<{ threadId: string; turnId: string }>,
     compactThreadIds: [] as string[],
@@ -88,6 +89,7 @@ vi.mock('./codexAppServerClient', () => {
         async resumeThread(params?: { threadId?: string }): Promise<{ thread: { id: string }; model: string }> {
             const id = params?.threadId ?? 'thread-resumed';
             harness.resumeThreadIds.push(id);
+            harness.resumeThreadCalls.push(params);
             if (harness.failResumeThreadIds.includes(id)) {
                 throw new Error('resume failed');
             }
@@ -668,15 +670,16 @@ function createMode(): EnhancedMode {
     };
 }
 
-function createSessionStub(opts?: string[] | { messages?: string[]; forkSessionId?: string | null }) {
+function createSessionStub(opts?: string[] | { messages?: string[]; messageSeqs?: number[]; forkSessionId?: string | null; forkHistory?: unknown[] }) {
     const options = Array.isArray(opts) ? { messages: opts } : opts;
     const messages = options?.messages ?? ['hello from launcher test'];
     const queue = new MessageQueue2<EnhancedMode>((mode) => JSON.stringify(mode));
     messages.forEach((message, index) => {
+        const messageSeq = options?.messageSeqs?.[index] ?? null;
         if (index === 0 && messages.length > 1) {
-            queue.pushIsolateAndClear(message, createMode());
+            queue.pushIsolateAndClear(message, createMode(), undefined, messageSeq);
         } else {
-            queue.push(message, createMode());
+            queue.push(message, createMode(), undefined, messageSeq);
         }
     });
     queue.close();
@@ -684,6 +687,7 @@ function createSessionStub(opts?: string[] | { messages?: string[]; forkSessionI
     const sessionEvents: Array<{ type: string; [key: string]: unknown }> = [];
     const codexMessages: unknown[] = [];
     const summaryMessages: unknown[] = [];
+    const historyItems: unknown[] = [];
     const thinkingChanges: boolean[] = [];
     const foundSessionIds: string[] = [];
     const resetThreadCalls: string[] = [];
@@ -710,6 +714,9 @@ function createSessionStub(opts?: string[] | { messages?: string[]; forkSessionI
         sendClaudeSessionMessage(message: unknown) {
             summaryMessages.push(message);
         },
+        sendCodexHistoryItem(item: unknown) {
+            historyItems.push(item);
+        },
         sendSessionEvent(event: { type: string; [key: string]: unknown }) {
             sessionEvents.push(event);
         }
@@ -724,6 +731,7 @@ function createSessionStub(opts?: string[] | { messages?: string[]; forkSessionI
         codexCliOverrides: undefined,
         sessionId: null as string | null,
         forkSessionId: options?.forkSessionId ?? undefined,
+        forkHistory: options?.forkHistory ?? undefined,
         thinking: false,
         getPermissionMode() {
             return 'default' as const;
@@ -765,6 +773,7 @@ function createSessionStub(opts?: string[] | { messages?: string[]; forkSessionI
         sessionEvents,
         codexMessages,
         summaryMessages,
+        historyItems,
         thinkingChanges,
         foundSessionIds,
         resetThreadCalls,
@@ -781,6 +790,7 @@ describe('codexRemoteLauncher', () => {
         harness.initializeCalls = [];
         harness.startThreadIds = [];
         harness.resumeThreadIds = [];
+        harness.resumeThreadCalls = [];
         harness.startTurnThreadIds = [];
         harness.interruptedTurns = [];
         harness.compactThreadIds = [];
@@ -1487,6 +1497,52 @@ describe('codexRemoteLauncher', () => {
             persistExtendedHistory: true
         });
         expect(foundSessionIds).toContain('thread-forked');
+    });
+
+    it('resumes a new thread with raw history for historical fork', async () => {
+        const forkHistory = [{ id: 'user-1', role: 'user' }];
+        const {
+            session,
+            foundSessionIds
+        } = createSessionStub({ forkSessionId: 'thread-source', forkHistory });
+
+        const exitReason = await codexRemoteLauncher(session as never);
+
+        expect(exitReason).toBe('exit');
+        expect(harness.forkCalls).toHaveLength(0);
+        expect(harness.resumeThreadCalls).toHaveLength(1);
+        expect(harness.resumeThreadCalls[0]).toMatchObject({
+            history: forkHistory,
+            cwd: '/tmp/hapi-update'
+        });
+        expect(foundSessionIds[0]).toMatch(/^hapi-fork-/);
+    });
+
+    it('records user raw history before completed app-server items', async () => {
+        const {
+            session,
+            historyItems
+        } = createSessionStub({ messages: ['hello from launcher test'], messageSeqs: [7] });
+
+        await codexRemoteLauncher(session as never);
+
+        expect(historyItems).toHaveLength(2);
+        expect(historyItems[0]).toMatchObject({
+            codexThreadId: 'thread-1',
+            itemId: 'hapi-user-7',
+            itemKind: 'user',
+            messageSeq: 7,
+            rawItem: {
+                id: 'hapi-user-7',
+                role: 'user'
+            }
+        });
+        expect(historyItems[1]).toMatchObject({
+            codexThreadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'cmd-1',
+            itemKind: 'tool'
+        });
     });
 
     it('clears codex thread state without starting a turn', async () => {

@@ -4,6 +4,7 @@ export interface SpawnSessionOptions {
     sessionId?: string
     resumeSessionId?: string
     forkSessionId?: string
+    forkHistory?: unknown[]
     approvedNewDirectoryCreation?: boolean
     agent?: 'claude' | 'codex' | 'cursor' | 'gemini' | 'opencode'
     model?: string

@@ -108,6 +108,7 @@ function areUserTextBlocksEqual(left: UserTextBlock, right: UserTextBlock): bool
     return left.text === right.text
         && left.status === right.status
         && left.originalText === right.originalText
+        && left.seq === right.seq
         && left.localId === right.localId
         && left.createdAt === right.createdAt
         && left.meta === right.meta
