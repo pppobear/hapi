@@ -65,7 +65,7 @@ export class SyncEngine {
     private inactivityTimer: NodeJS.Timeout | null = null
 
     constructor(
-        private readonly store: Store,
+        store: Store,
         io: Server,
         rpcRegistry: RpcRegistry,
         sseManager: SSEManager

@@ -32,8 +32,12 @@ function renderUserMessage(onForkBeforeMessage?: (seq: number) => void) {
                 api: {} as never,
                 sessionId: 's1',
                 metadata: null,
+                terminalToolDisplayMode: 'compact',
                 disabled: false,
                 onRefresh: vi.fn(),
+                hasMoreMessages: false,
+                isLoadingMoreMessages: false,
+                loadOlderMessagesPreservingScroll: async () => false,
                 onForkBeforeMessage
             }}
         >
